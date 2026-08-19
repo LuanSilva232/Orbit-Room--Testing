@@ -188,6 +188,8 @@ const STRINGS = {
   accountDesc: ['Entrar com o Google e gerenciar sua conta', 'Sign in with Google and manage your account'],
   accountInfo: ['Suas informações da conta Google', 'Your Google account info'],
   accountEditHint: ['Para editar nome, foto e fundo, vá em Meu Perfil.', 'To edit name, photo and background, go to My Profile.'],
+  revealEmail: ['Revelar e-mail', 'Reveal email'],
+  hideEmail: ['Ocultar e-mail', 'Hide email'],
   notConnected: ['Você não está conectado', 'You are not signed in'],
   accountSignInHint: ['Entre com o Google para salvar e sincronizar seu perfil.', 'Sign in with Google to save and sync your profile.'],
   signInGoogle: ['Entrar com o Google', 'Sign in with Google'],
@@ -273,6 +275,15 @@ export function ShareRoom() {
 
   const [profile, setProfile] = useState<Profile>({ name: '' })
   const [editProfileOpen, setEditProfileOpen] = useState(false)
+  const [revealEmail, setRevealEmail] = useState(false)
+  const maskEmail = (e: string) => {
+    const at = e.indexOf('@')
+    if (at <= 0) return e
+    const u = e.slice(0, at)
+    const d = e.slice(at)
+    const stars = u.length <= 3 ? '*'.repeat(u.length) : `${u.slice(0, 2)}${'*'.repeat(u.length - 2)}`
+    return `${stars}${d}`
+  }
   const [viewProfile, setViewProfile] = useState<Profile | null>(null)
   const [viewAnonProfile, setViewAnonProfile] = useState<{ name: string } | null>(null)
   const [profileMenuMsg, setProfileMenuMsg] = useState<string | null>(null)
@@ -1697,13 +1708,6 @@ export function ShareRoom() {
             {profile.name || name}
           </span>
           <button
-            title="Configurações do perfil"
-            onClick={() => setEditProfileOpen(true)}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition hover:bg-white/20"
-          >
-            ⚙️
-          </button>
-          <button
             type="button"
             title="Quem está online e offline"
             onClick={() => {
@@ -1720,15 +1724,15 @@ export function ShareRoom() {
             tabIndex={0}
             title={t('configTitle')}
             onClick={() => {
-              setConfigPane('perfil')
+              setConfigPane('menu')
               setConfigOpen(true)
               setMobileTab('config')
             }}
-            className={`relative hidden h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition lg:flex ${
+            className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition lg:flex ${
               configOpen ? 'bg-white/20' : 'hover:bg-white/20'
             }`}
           >
-            🛠️
+            ⚙️
           </div>
           {!authUser && (
             <a
@@ -2338,36 +2342,55 @@ export function ShareRoom() {
 
                   {authUser ? (
                     <>
-                      {/* Fundo / papel de parede (não editável aqui) */}
-                      <div
-                        className="h-24 w-full rounded-xl bg-cover bg-center ring-1 ring-white/10"
-                        style={
-                          profile.cover
-                            ? { backgroundImage: `url(${profile.cover})` }
-                            : undefined
-                        }
-                      >
-                        {!profile.cover && (
-                          <div className="flex h-full w-full items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 to-fuchsia-500/10 text-3xl">
-                            🖼️
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <Avatar
-                          name={profile.name || name}
-                          photo={profile.photo}
-                          size={56}
-                          isAnonymous={false}
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate text-base font-bold">{profile.name || name}</div>
-                          <div className="truncate text-xs text-slate-400">{authUser.email}</div>
+                      {/* Capa com avatar redondo sobreposto no canto inferior esquerdo */}
+                      <div className="relative">
+                        <div
+                          className="h-28 w-full rounded-xl bg-cover bg-center ring-1 ring-white/10"
+                          style={
+                            profile.cover
+                              ? { backgroundImage: `url(${profile.cover})` }
+                              : undefined
+                          }
+                        >
+                          {!profile.cover && (
+                            <div className="flex h-full w-full items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 to-fuchsia-500/10 text-3xl">
+                              🖼️
+                            </div>
+                          )}
+                        </div>
+                        <div className="absolute -bottom-6 left-3">
+                          <Avatar
+                            name={profile.name || name}
+                            photo={profile.photo}
+                            size={64}
+                            className="ring-4 ring-slate-900"
+                            isAnonymous={false}
+                          />
                         </div>
                       </div>
 
-                      <p className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs leading-relaxed text-slate-400">
+                      {/* Nome e e-mail dentro da caixa */}
+                      <div className="mt-7 flex flex-col gap-1.5 px-1">
+                        <div className="truncate text-base font-bold">{profile.name || name}</div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            translate="no"
+                            className="truncate rounded-md bg-white/5 px-2 py-1 text-xs text-slate-300 ring-1 ring-white/10"
+                          >
+                            {revealEmail ? authUser.email : maskEmail(authUser.email)}
+                          </span>
+                          <button
+                            type="button"
+                            title={revealEmail ? t('hideEmail') : t('revealEmail')}
+                            onClick={() => setRevealEmail((v) => !v)}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition hover:bg-white/20"
+                          >
+                            {revealEmail ? '🙈' : '👁️'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="mt-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs leading-relaxed text-slate-400">
                         💡 {t('accountEditHint')}
                       </p>
 
