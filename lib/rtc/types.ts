@@ -9,6 +9,7 @@ export type Member = {
   photo?: string
   bio?: string
   cover?: string
+  isAnonymous: boolean
 }
 
 export type SignalKind = 'offer' | 'answer' | 'ice'
@@ -32,6 +33,7 @@ export type ChatMessage = {
   photo?: string
   bio?: string
   cover?: string
+  isAnonymous: boolean
 }
 
 export type Quality = 'auto' | 'baixa' | 'media' | 'alta'

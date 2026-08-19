@@ -18,7 +18,7 @@ import {
   type SignalKind,
 } from '@/lib/rtc/types'
 
-import { Avatar, ProfileEditModal, ProfileViewModal } from './modals'
+import { AnonProfileModal, Avatar, ProfileEditModal, ProfileViewModal } from './modals'
 
 const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline ("fantasma")
 
@@ -266,6 +266,7 @@ export function ShareRoom() {
   const [profile, setProfile] = useState<Profile>({ name: '' })
   const [editProfileOpen, setEditProfileOpen] = useState(false)
   const [viewProfile, setViewProfile] = useState<Profile | null>(null)
+  const [viewAnonProfile, setViewAnonProfile] = useState<{ name: string } | null>(null)
   const [profileMenuMsg, setProfileMenuMsg] = useState<string | null>(null)
 
   const [mutedPeers, setMutedPeers] = useState<Record<string, boolean>>({})
@@ -488,6 +489,19 @@ export function ShareRoom() {
     []
   )
 
+  // Torna o usuário "online" no site (sem precisar entrar em uma sala).
+  const registerPresence = useCallback(() => {
+    if (!clientIdRef.current) return
+    void apiClient.post('/api/rtc', {
+      action: 'presence',
+      clientId: clientIdRef.current,
+      name: nameRef.current,
+      photo: profileRef.current.photo,
+      bio: profileRef.current.bio,
+      cover: profileRef.current.cover,
+    })
+  }, [])
+
   const bind = useCallback((el: HTMLMediaElement | null, stream: MediaStream | null) => {
     if (!el || !stream) return
     if (el.srcObject !== stream) el.srcObject = stream
@@ -656,6 +670,7 @@ export function ShareRoom() {
     setName(sn)
     setProfile(saved)
     profileRef.current = saved
+    registerPresence()
 
     const engine = new RtcEngine(
       id,
@@ -814,7 +829,7 @@ export function ShareRoom() {
       window.clearInterval(timer)
       engine.closeAll()
     }
-  }, [sendSignalBody, settings.notifications])
+  }, [sendSignalBody, settings.notifications, registerPresence])
 
   // ----- conta: carrega o usuário logado e o perfil salvo no servidor -----
   useEffect(() => {
@@ -878,6 +893,8 @@ export function ShareRoom() {
                 body: JSON.stringify({ name: next.name, bio: next.bio, photo: next.photo, cover: next.cover }),
               }).catch(() => {})
             }
+            // Atualiza a presença online com o nome/foto reais da conta logada.
+            registerPresence()
           })
       })
       .catch(() => {
@@ -1159,12 +1176,26 @@ export function ShareRoom() {
   }, [setAuth])
 
   const saveProfile = useCallback(async (next: Profile) => {
+    // Nome único: não deixa duas pessoas usarem o mesmo nome.
+    const nextName = next.name?.trim() || ''
+    if (nextName) {
+      const check = await apiClient.post<{ available: boolean }>('/api/rtc', {
+        action: 'check-name',
+        name: nextName,
+        exceptClientId: clientIdRef.current,
+      })
+      if (check.success && !check.data.available) {
+        toast.error('Este nome já está em uso. Escolha outro.')
+        return
+      }
+    }
     profileRef.current = next
     setProfile(next)
     localStorage.setItem(PROFILE_KEY, JSON.stringify(next))
     persistProfileToServer(next)
     setEditProfileOpen(false)
     if (next.name) nameRef.current = next.name
+    registerPresence()
     if (!inCallRef.current) return
     const res = await apiClient.post<{ channel: ChannelId; members: Member[] }>(
       '/api/rtc',
@@ -1179,15 +1210,25 @@ export function ShareRoom() {
       }
     )
     if (!res.success) toast.error(res.error)
-  }, [persistProfileToServer])
+  }, [persistProfileToServer, registerPresence])
 
-  const resetMyName = useCallback(() => {
+  const resetMyName = useCallback(async () => {
     if (!authUserRef.current) {
       toast.error('Faça login com o Google para trocar seu nome.')
       return
     }
     const next = (window.prompt('Qual nome você quer usar?') || '').trim()
     if (!next) return
+    // Nome único: não deixa duas pessoas usarem o mesmo nome.
+    const check = await apiClient.post<{ available: boolean }>('/api/rtc', {
+      action: 'check-name',
+      name: next,
+      exceptClientId: clientIdRef.current,
+    })
+    if (check.success && !check.data.available) {
+      toast.error('Este nome já está em uso. Escolha outro.')
+      return
+    }
     const saved: Profile = {
       name: next,
       photo: profileRef.current.photo,
@@ -1201,6 +1242,7 @@ export function ShareRoom() {
     setName(next)
     setProfile(saved)
     toast.success(`Nome alterado para ${next}`)
+    registerPresence()
     if (inCallRef.current && channelRef.current) {
       void apiClient.post('/api/rtc', {
         action: 'join',
@@ -1212,7 +1254,7 @@ export function ShareRoom() {
         channel: channelRef.current,
       })
     }
-  }, [persistProfileToServer])
+  }, [persistProfileToServer, registerPresence])
 
   // ----- gerenciar usuários offline (fantasmas) -----
   const removeAllOffline = useCallback(async () => {
@@ -1641,7 +1683,7 @@ export function ShareRoom() {
 
         {/* Mini perfil compacto + botão editar */}
         <div className="share-panel-soft mt-4 flex items-center gap-2 rounded-lg px-2 py-1.5">
-          <Avatar name={profile.name || name} photo={profile.photo} size={30} />
+          <Avatar name={profile.name || name} photo={profile.photo} size={30} isAnonymous={!authUserRef.current} />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
             {profile.name || name}
           </span>
@@ -1950,7 +1992,11 @@ export function ShareRoom() {
                     >
                       <button
                         onClick={() => {
-                          setViewProfile({ name: m.author, photo: m.photo, bio: m.bio, cover: m.cover })
+                          if (m.isAnonymous) {
+                            setViewAnonProfile({ name: m.author })
+                          } else {
+                            setViewProfile({ name: m.author, photo: m.photo, bio: m.bio, cover: m.cover })
+                          }
                           setProfileMenuMsg(null)
                         }}
                         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-200 hover:bg-white/5"
@@ -2052,6 +2098,9 @@ export function ShareRoom() {
       />
       {viewProfile && (
         <ProfileViewModal profile={viewProfile} onClose={() => setViewProfile(null)} />
+      )}
+      {viewAnonProfile && (
+        <AnonProfileModal name={viewAnonProfile.name} onClose={() => setViewAnonProfile(null)} />
       )}
 
       {/* Barra inferior de categorias (só mobile) */}
@@ -2276,10 +2325,10 @@ export function ShareRoom() {
                     <div className="space-y-1">
                       {onlineMembers.map((m) => (
                         <div key={m.clientId} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
-                          <Avatar name={m.name} photo={m.photo} size={24} />
+                          <Avatar name={m.name} photo={m.photo} size={24} isAnonymous={m.isAnonymous} />
                           <span className="min-w-0 flex-1 truncate">{m.name}</span>
                           <span className={`h-2 w-2 shrink-0 rounded-full ${m.channel === channel ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/5 hover:text-slate-200">⋯</button>
+                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); if (m.isAnonymous) setViewAnonProfile({ name: m.name }); else setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/5 hover:text-slate-200">⋯</button>
                         </div>
                       ))}
                     </div>
@@ -2296,10 +2345,10 @@ export function ShareRoom() {
                     <ul className="space-y-0.5">
                       {offlineMembers.map((m) => (
                         <li key={m.clientId} className="flex items-center gap-2 text-xs text-slate-400">
-                          <Avatar name={m.name} photo={m.photo} size={20} />
+                          <Avatar name={m.name} photo={m.photo} size={20} isAnonymous={m.isAnonymous} />
                           <span className="min-w-0 flex-1 truncate">{m.name}</span>
                           {typeof m.lastSeen === 'number' && <span translate="no" title="Há quanto tempo saiu" className="shrink-0 text-[10px] tabular-nums text-slate-500">{formatAgo(m.lastSeen)}</span>}
-                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-slate-200">⋯</button>
+                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); if (m.isAnonymous) setViewAnonProfile({ name: m.name }); else setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-slate-200">⋯</button>
                           <button title="Apagar registro offline" onClick={() => void removeOfflineMember(m.clientId)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-red-300">✕</button>
                         </li>
                       ))}

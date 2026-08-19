@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 
 import { handleApiError } from '@/lib/api-error-response'
-import { AppError, ValidationError } from '@/lib/errors'
+import { ValidationError } from '@/lib/errors'
 import * as store from '@/lib/rtc/store'
+import { getCurrentUser } from '@/lib/auth'
 import type {
   ChannelId,
   ChatMessage,
@@ -83,14 +84,32 @@ export async function POST(req: Request) {
       const cover = typeof body.cover === 'string' ? body.cover : undefined
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
-      const result = await store.joinChannel(clientId, name, photo, bio, cover, channel as ChannelId)
-      if (result.ok === false) {
-        throw new AppError('Este nome já está em uso', 409, 'NAME_TAKEN')
-      }
+      const user = await getCurrentUser()
+      const result = await store.joinChannel(
+        clientId,
+        name,
+        photo,
+        bio,
+        cover,
+        channel as ChannelId,
+        user?.id ?? null
+      )
       return ok<{ channel: ChannelId; members: Member[] }>({
         channel: result.channel,
         members: result.members,
       })
+    }
+
+    if (action === 'presence') {
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      const photo = typeof body.photo === 'string' ? body.photo : undefined
+      const bio = typeof body.bio === 'string' ? body.bio : undefined
+      const cover = typeof body.cover === 'string' ? body.cover : undefined
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      const user = await getCurrentUser()
+      await store.registerPresence(clientId, name, photo, bio, cover, user?.id ?? null)
+      return ok<{ ok: boolean }>({ ok: true })
     }
 
     if (action === 'leave') {
@@ -130,11 +149,12 @@ export async function POST(req: Request) {
       const type = body.type === 'voice' ? 'voice' : undefined
       const audioUrl = typeof body.audioUrl === 'string' ? body.audioUrl : undefined
       if (!text) throw new ValidationError('Mensagem vazia')
+      const user = await getCurrentUser()
       return ok<{ message: ChatMessage }>({
         message: await store.addChat(channel as ChannelId, authorId, author, text, {
           type,
           audioUrl,
-        }),
+        }, user?.id ?? null),
       })
     }
 
