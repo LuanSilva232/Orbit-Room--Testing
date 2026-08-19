@@ -1,0 +1,426 @@
+import 'server-only'
+
+import type { JSONValue } from 'postgres'
+import type {
+  ChannelId,
+  ChatMessage,
+  MailboxMessage,
+  Member,
+  SignalKind,
+} from './types'
+import { ensureDb, getSql } from '@/db'
+
+// Estado da sala (presença, sinalização, chat e compartilhamento de tela)
+// persistido no banco em nuvem. Isso permite funcionar em hospedagens
+// serverless (Vercel), onde cada requisição pode cair numa instância diferente
+// e o estado precisa ser compartilhado/centralizado.
+export const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline ("fantasma")
+
+type ClientRow = {
+  client_id: string
+  name: string
+  photo: string | null
+  bio: string | null
+  channel: string
+  joined_at: string | number
+  last_seen: string | number
+  left_at: string | number | null
+}
+
+type TrackRow = { client_id: string; track_ids: string[] }
+
+const nowMs = (): number => Date.now()
+const isOffline = (lastSeen: string | number): boolean =>
+  nowMs() - Number(lastSeen) > OFFLINE_MS
+
+// Saiu da sala (left_at preenchido) OU ficou tempo demais sem atividade.
+const isGone = (r: ClientRow): boolean =>
+  r.left_at !== null && r.left_at !== undefined
+    ? true
+    : isOffline(r.last_seen)
+
+function toMember(r: ClientRow): Member {
+  return {
+    clientId: r.client_id,
+    name: r.name,
+    channel: r.channel as ChannelId,
+    joinedAt: Number(r.joined_at),
+    lastSeen: Number(r.last_seen),
+    photo: r.photo ?? undefined,
+    bio: r.bio ?? undefined,
+  }
+}
+
+async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
+  const rows = await getSql()<ClientRow[]>`
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    FROM rtc_clients WHERE client_id = ${clientId}
+  `
+  return rows[0]
+}
+
+async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
+  return getSql()<ClientRow[]>`
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    FROM rtc_clients
+    WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+  `
+}
+
+// O payload é guardado como JSON genérico; o id real é atribuído pelo serial do banco.
+type MailPayload = JSONValue
+
+/** Insere uma mensagem na caixa postal de um destinatário (id atribuído pelo serial). */
+async function enqueueTo(to: string, payload: MailPayload): Promise<void> {
+  const sql = getSql()
+  await sql`
+    INSERT INTO rtc_mailbox (to_client, payload)
+    VALUES (${to}, ${sql.json(payload)})
+  `
+}
+
+/** Envia uma mensagem a todos os membros online do canal, exceto um. */
+async function notifyChannel(
+  channel: ChannelId,
+  makeMsg: (member: Member) => MailPayload,
+  exceptClientId?: string
+): Promise<void> {
+  const rows = await channelRows(channel)
+  const sql = getSql()
+  for (const row of rows) {
+    if (row.client_id === exceptClientId) continue
+    const member = toMember(row)
+    await sql`
+      INSERT INTO rtc_mailbox (to_client, payload)
+      VALUES (${row.client_id}, ${sql.json(makeMsg(member))})
+    `
+  }
+}
+
+/** Envia ao recém-chegado os compartilhamentos de tela já ativos no canal. */
+async function pushExistingScreenKinds(to: string, channel: ChannelId): Promise<void> {
+  const tracks = await getSql()<TrackRow[]>`SELECT client_id, track_ids FROM rtc_screen_tracks`
+  for (const t of tracks) {
+    if (t.client_id === to) continue
+    const owner = await getClientRow(t.client_id)
+    if (!owner || owner.channel !== channel) continue
+    await enqueueTo(to, { type: 'screen-kind', from: t.client_id, trackIds: t.track_ids })
+  }
+}
+
+export function isChannel(channel: string): boolean {
+  return ['geral', 'sala-1', 'sala-2', 'sala-3'].includes(channel)
+}
+
+export async function isNameTaken(
+  name: string,
+  exceptClientId?: string
+): Promise<boolean> {
+  await ensureDb()
+  const n = name.trim().toLowerCase()
+  const rows = await getSql()<ClientRow[]>`
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    FROM rtc_clients
+    WHERE lower(name) = ${n} AND client_id <> ${exceptClientId ?? ''}
+  `
+  return rows.some((r) => !isGone(r))
+}
+
+export async function onlineMembers(): Promise<Member[]> {
+  await ensureDb()
+  const rows = await getSql()<ClientRow[]>`
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    FROM rtc_clients WHERE left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+  `
+  return rows.map(toMember)
+}
+
+/** Membros que saíram (ou inativos há mais de 15min) — podem ser apagados. */
+export async function offlineMembers(): Promise<Member[]> {
+  await ensureDb()
+  const rows = await getSql()<ClientRow[]>`
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    FROM rtc_clients
+    WHERE left_at IS NOT NULL OR last_seen <= ${nowMs() - OFFLINE_MS}
+  `
+  return rows.map(toMember)
+}
+
+export async function membersInChannel(channel: ChannelId): Promise<Member[]> {
+  await ensureDb()
+  return (await channelRows(channel)).map(toMember)
+}
+
+export async function getMember(clientId: string): Promise<Member | undefined> {
+  await ensureDb()
+  const row = await getClientRow(clientId)
+  return row ? toMember(row) : undefined
+}
+
+export async function joinChannel(
+  clientId: string,
+  name: string,
+  photo: string | undefined,
+  bio: string | undefined,
+  channel: ChannelId
+): Promise<
+  | { ok: true; channel: ChannelId; members: Member[] }
+  | { ok: false; reason: 'NAME_TAKEN' }
+> {
+  await ensureDb()
+  const now = nowMs()
+  const previous = await getClientRow(clientId)
+
+  if (previous && previous.channel === channel) {
+    // Reentrada no MESMO canal. Se o usuário tinha saído (left_at preenchido),
+    // é uma nova entrada de fato: avisa os demais como peer-joined para que
+    // recriem a conexão WebRTC. Caso contrário, é só atualização de perfil.
+    const wasAway = previous.left_at !== null && previous.left_at !== undefined
+    await getSql()`
+      UPDATE rtc_clients
+      SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null},
+          last_seen = ${now}, left_at = NULL
+      WHERE client_id = ${clientId}
+    `
+    if (wasAway) {
+      const rejoined: Member = {
+        clientId,
+        name,
+        channel,
+        joinedAt: Number(previous.joined_at),
+        photo,
+        bio,
+      }
+      await notifyChannel(channel, () => ({ type: 'peer-joined', member: rejoined }), clientId)
+    } else {
+      await notifyChannel(channel, (m) => ({ type: 'peer-updated', member: m }), clientId)
+    }
+    const members = (await channelRows(channel))
+      .filter((r) => r.client_id !== clientId)
+      .map(toMember)
+    await enqueueTo(clientId, { type: 'channel-state', channel, members })
+    await pushExistingScreenKinds(clientId, channel)
+    return { ok: true, channel, members }
+  }
+
+  if (previous) {
+    const oldChannel = previous.channel as ChannelId
+    await notifyChannel(
+      oldChannel,
+      () => ({ type: 'peer-left', clientId }),
+      clientId
+    )
+    await getSql()`
+      UPDATE rtc_clients
+      SET channel = ${channel}, name = ${name}, photo = ${photo ?? null},
+          bio = ${bio ?? null}, last_seen = ${now}, left_at = NULL
+      WHERE client_id = ${clientId}
+    `
+  } else {
+    await getSql()`
+      INSERT INTO rtc_clients (client_id, name, photo, bio, channel, joined_at, last_seen, left_at)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${channel}, ${now}, ${now}, NULL)
+    `
+  }
+
+  const member: Member = {
+    clientId,
+    name,
+    channel,
+    joinedAt: previous ? Number(previous.joined_at) : now,
+    photo,
+    bio,
+  }
+
+  await notifyChannel(channel, () => ({ type: 'peer-joined', member }), clientId)
+
+  const members = (await channelRows(channel))
+    .filter((r) => r.client_id !== clientId)
+    .map(toMember)
+  await enqueueTo(clientId, { type: 'channel-state', channel, members })
+  await pushExistingScreenKinds(clientId, channel)
+
+  return { ok: true, channel, members }
+}
+
+export async function leaveChannel(clientId: string): Promise<void> {
+  await ensureDb()
+  const stored = await getClientRow(clientId)
+  if (!stored) return
+  await notifyChannel(stored.channel as ChannelId, () => ({ type: 'peer-left', clientId }), clientId)
+  await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${clientId}`
+  // Marca como offline na hora (mantém o registro p/ aparecer na lista Offline),
+  // mas também guarda o instante da saída para exibir "há X min/h".
+  await getSql()`
+    UPDATE rtc_clients
+    SET left_at = ${nowMs()}, last_seen = ${nowMs()}
+    WHERE client_id = ${clientId}
+  `
+}
+
+export async function enqueueSignal(
+  from: string,
+  to: string,
+  kind: SignalKind,
+  data: JSONValue
+): Promise<void> {
+  await ensureDb()
+  const target = await getClientRow(to)
+  if (!target) return
+  await enqueueTo(to, { type: 'signal', from, kind, data })
+}
+
+/** Registra os ids das trilhas de vídeo de tela de um cliente e avisa os demais do canal. */
+export async function broadcastScreenKind(clientId: string, trackIds: string[]): Promise<void> {
+  await ensureDb()
+  const member = await getMember(clientId)
+  if (!member) return
+  await getSql()`
+    INSERT INTO rtc_screen_tracks (client_id, track_ids)
+    VALUES (${clientId}, ${trackIds})
+    ON CONFLICT (client_id)
+    DO UPDATE SET track_ids = EXCLUDED.track_ids
+  `
+  await notifyChannel(
+    member.channel,
+    () => ({ type: 'screen-kind', from: clientId, trackIds }),
+    clientId
+  )
+}
+
+export async function drainMailbox(clientId: string): Promise<MailboxMessage[]> {
+  await ensureDb()
+  const sql = getSql()
+  const rows = await sql<{ id: string; payload: Record<string, unknown> }[]>`
+    SELECT id, payload FROM rtc_mailbox WHERE to_client = ${clientId} ORDER BY id
+  `
+  if (rows.length > 0) {
+    await sql`DELETE FROM rtc_mailbox WHERE to_client = ${clientId}`
+  }
+  // Atualiza a atividade apenas enquanto o usuário ainda está DENTRO de um canal
+  // (left_at IS NULL). Assim, depois que ele sai, o last_seen congela no instante
+  // da saída e o "há quanto tempo" (ex.: "há 3 min") passa a contar de verdade,
+  // em vez de ficar preso em "agora".
+  await sql`UPDATE rtc_clients SET last_seen = ${nowMs()} WHERE client_id = ${clientId} AND left_at IS NULL`
+  return rows.map((r) => ({ ...r.payload, id: Number(r.id) }) as MailboxMessage)
+}
+
+export async function addChat(
+  channel: ChannelId,
+  authorId: string,
+  author: string,
+  text: string,
+  extra: { type?: ChatMessage['type']; audioUrl?: string } = {}
+): Promise<ChatMessage> {
+  await ensureDb()
+  const sender = await getClientRow(authorId)
+  const message: ChatMessage = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    channel,
+    memberId: authorId,
+    author: (sender?.name ?? author) || 'Anon',
+    text,
+    time: nowMs(),
+    type: extra.type,
+    audioUrl: extra.audioUrl,
+    photo: sender?.photo ?? undefined,
+    bio: sender?.bio ?? undefined,
+  }
+  await getSql()`
+    INSERT INTO rtc_chat (id, channel, member_id, author, text, time, type, audio_url, photo, bio)
+    VALUES (${message.id}, ${channel}, ${authorId}, ${message.author}, ${text},
+            ${message.time}, ${extra.type ?? null}, ${extra.audioUrl ?? null},
+            ${sender?.photo ?? null}, ${sender?.bio ?? null})
+  `
+  await notifyChannel(channel, () => ({ type: 'chat', message }))
+  return message
+}
+
+export async function deleteChat(messageId: string): Promise<boolean> {
+  await ensureDb()
+  const rows = await getSql()<{ channel: string }[]>`SELECT channel FROM rtc_chat WHERE id = ${messageId}`
+  if (rows.length === 0) return false
+  await getSql()`DELETE FROM rtc_chat WHERE id = ${messageId}`
+  await notifyChannel(rows[0].channel as ChannelId, () => ({ type: 'chat-deleted', messageId }))
+  return true
+}
+
+export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
+  await ensureDb()
+  type ChatRow = {
+    id: string
+    channel: string
+    member_id: string | null
+    author: string
+    text: string
+    time: string | number
+    type: string | null
+    audio_url: string | null
+    photo: string | null
+    bio: string | null
+  }
+  const rows = await getSql()<ChatRow[]>`
+    SELECT id, channel, member_id, author, text, time, type, audio_url, photo, bio
+    FROM rtc_chat WHERE channel = ${channel} ORDER BY time DESC LIMIT 100
+  `
+  // Reverte a ordem para cronológica.
+  return rows.reverse().map((r) => ({
+    id: r.id,
+    channel: r.channel as ChannelId,
+    memberId: r.member_id ?? '',
+    author: r.author,
+    text: r.text,
+    time: Number(r.time),
+    type: (r.type as ChatMessage['type']) ?? undefined,
+    audioUrl: r.audio_url ?? undefined,
+    photo: r.photo ?? undefined,
+    bio: r.bio ?? undefined,
+  }))
+}
+
+/** Apaga o registro de um único usuário offline (fantasma). */
+export async function removeOfflineMember(clientId: string): Promise<Member | undefined> {
+  await ensureDb()
+  const stored = await getClientRow(clientId)
+  if (!stored || !isGone(stored)) return undefined
+  const member = toMember(stored)
+  await notifyChannel(member.channel, () => ({ type: 'peer-left', clientId }), clientId)
+  await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${clientId}`
+  await getSql()`DELETE FROM rtc_clients WHERE client_id = ${clientId}`
+  return member
+}
+
+/** Apaga todos os usuários offline e devolve a lista removida. */
+export async function removeAllOffline(): Promise<Member[]> {
+  await ensureDb()
+  const rows = await getSql()<ClientRow[]>`
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    FROM rtc_clients
+    WHERE left_at IS NOT NULL OR last_seen <= ${nowMs() - OFFLINE_MS}
+  `
+  const removed: Member[] = []
+  for (const row of rows) {
+    const member = toMember(row)
+    await notifyChannel(member.channel, () => ({ type: 'peer-left', clientId: member.clientId }), member.clientId)
+    await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${member.clientId}`
+    await getSql()`DELETE FROM rtc_clients WHERE client_id = ${member.clientId}`
+    removed.push(member)
+  }
+  return removed
+}
+
+export async function markSeen(clientId: string): Promise<void> {
+  await ensureDb()
+  await getSql()`UPDATE rtc_clients SET last_seen = ${nowMs()} WHERE client_id = ${clientId}`
+}
+
+/** Transmite um "mudo global" de um usuário para todos os clientes online (poder de admin). */
+export async function broadcastAdminMute(targetId: string, muted: boolean): Promise<void> {
+  await ensureDb()
+  const rows = await getSql()<{ client_id: string }[]>`
+    SELECT client_id FROM rtc_clients WHERE left_at IS NULL
+  `
+  for (const r of rows) {
+    await enqueueTo(r.client_id, { type: 'admin-mute', targetId, muted })
+  }
+}
