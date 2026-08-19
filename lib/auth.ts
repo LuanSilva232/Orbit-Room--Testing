@@ -3,6 +3,7 @@ import 'server-only'
 import { cookies } from 'next/headers'
 import { createHash, randomBytes } from 'crypto'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import type { Sql } from 'postgres'
 import { ensureDb, getSql } from '@/db/index'
 
 export const SESSION_COOKIE = 'orbit_session'
@@ -192,7 +193,8 @@ export async function completeGoogleLogin(code: string, state: string): Promise<
   // Cria/reutiliza a conta e vincula (provider, sub) numa transação.
   const sessionToken = randomStr(32)
   const sessionId = randomStr(12)
-  const userId = await sql.begin(async (tx) => {
+  const userId = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Sql
     const [existing] = await tx`
       SELECT user_id FROM oauth_accounts
       WHERE provider = 'google' AND provider_subject = ${sub}

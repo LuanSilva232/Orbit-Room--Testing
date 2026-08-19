@@ -8,6 +8,10 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
   }
+  const rows = await getSql()<{ delete_scheduled_at: string | number | null }[]>`
+    SELECT delete_scheduled_at FROM users WHERE id = ${user.id}
+  `
+  const deleteScheduledAt = rows[0]?.delete_scheduled_at
   return NextResponse.json({
     profile: {
       name: user.name,
@@ -15,6 +19,8 @@ export async function GET() {
       photo: user.photo,
       cover: user.cover,
       rooms: user.rooms,
+      deleteScheduledAt:
+        deleteScheduledAt == null ? null : Number(deleteScheduledAt),
     },
   })
 }

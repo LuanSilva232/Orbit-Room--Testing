@@ -61,6 +61,14 @@ export function ensureDb(): Promise<void> {
           ADD COLUMN IF NOT EXISTS user_id text
       `
       await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS delete_scheduled_at bigint
+      `
+      await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS last_ip text
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS rtc_mailbox (
           id        bigserial PRIMARY KEY,
           to_client text NOT NULL,
@@ -127,6 +135,14 @@ export function ensureDb(): Promise<void> {
       await sql`
         ALTER TABLE users
           ADD COLUMN IF NOT EXISTS cover text
+      `
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS delete_scheduled_at bigint
+      `
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS last_ip text
       `
       await sql`
         CREATE TABLE IF NOT EXISTS oauth_accounts (

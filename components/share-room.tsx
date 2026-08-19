@@ -26,6 +26,54 @@ const CLIENT_KEY = 'share_room_client_id'
 const PROFILE_KEY = 'share_room_profile'
 const NOTIFY_ASKED_KEY = 'share_room_notify_asked'
 
+// Identidade anônima persistente por dispositivo: além do localStorage, o ID é
+// guardado no IndexedDB para que o mesmo navegador/celular "lembre" da mesma
+// conta anônima mesmo se o localStorage for limpo — evitando duplicar contas.
+const IDB_NAME = 'share_room_device'
+const IDB_STORE = 'kv'
+
+function openIdb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') return reject(new Error('no-idb'))
+    const req = indexedDB.open(IDB_NAME, 1)
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(IDB_STORE)) {
+        req.result.createObjectStore(IDB_STORE)
+      }
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function idbGet(key: string): Promise<string | null> {
+  try {
+    const db = await openIdb()
+    return await new Promise<string | null>((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly')
+      const rq = tx.objectStore(IDB_STORE).get(key)
+      rq.onsuccess = () => resolve(typeof rq.result === 'string' ? rq.result : null)
+      rq.onerror = () => resolve(null)
+    })
+  } catch {
+    return null
+  }
+}
+
+async function idbSet(key: string, value: string): Promise<void> {
+  try {
+    const db = await openIdb()
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite')
+      tx.objectStore(IDB_STORE).put(value, key)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => resolve()
+    })
+  } catch {
+    /* noop */
+  }
+}
+
 type Remote = { name: string; streams: MediaStream[] }
 
 // Mostra quanto tempo se passou desde um instante, em linguagem curta ("há 3 min", "há 2 h").
@@ -190,6 +238,12 @@ const STRINGS = {
   accountEditHint: ['Para editar nome, foto e fundo, vá em Meu Perfil.', 'To edit name, photo and background, go to My Profile.'],
   revealEmail: ['Revelar e-mail', 'Reveal email'],
   hideEmail: ['Ocultar e-mail', 'Hide email'],
+  deleteAccount: ['🗑 Excluir minha conta (em 3 dias)', '🗑 Delete my account (in 3 days)'],
+  deleteAccountAnon: ['🗑 Excluir minha conta anônima (em 3 dias)', '🗑 Delete my anonymous account (in 3 days)'],
+  deleteScheduled: ['Exclusão agendada', 'Deletion scheduled'],
+  deleteCountdownHint: ['Sua conta será excluída definitivamente em', 'Your account will be permanently deleted in'],
+  cancelDelete: ['Me arrependi — cancelar', 'I changed my mind — cancel'],
+  deleteStillWorks: ['Você pode continuar usando sua conta normalmente até lá.', 'You can keep using your account normally until then.'],
   notConnected: ['Você não está conectado', 'You are not signed in'],
   accountSignInHint: ['Entre com o Google para salvar e sincronizar seu perfil.', 'Sign in with Google to save and sync your profile.'],
   signInGoogle: ['Entrar com o Google', 'Sign in with Google'],
@@ -257,6 +311,30 @@ const STRINGS = {
   aboutCredits: ['Criado por Noah · v0.5', 'Created by Noah · v0.5'],
 } as const
 
+function formatRemaining(until: number, now: number): string {
+  const total = Math.max(0, Math.floor((until - now) / 1000))
+  const days = Math.floor(total / 86400)
+  const hours = Math.floor((total % 86400) / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  if (days >= 1) return `${days}D ${hours}h`
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+// Contagem regressiva da exclusão (3 dias de carência). Atualiza sozinha a cada segundo.
+function DeleteCountdown({ until }: { until: number }) {
+  const [now, setNow] = useState<number>(() => Date.now())
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(t)
+  }, [])
+  return (
+    <span translate="no" className="font-mono tabular-nums text-sm font-bold text-rose-200">
+      {formatRemaining(until, now)}
+    </span>
+  )
+}
+
 export function ShareRoom() {
   const [clientId, setClientId] = useState('')
   const [name, setName] = useState('')
@@ -276,6 +354,8 @@ export function ShareRoom() {
   const [profile, setProfile] = useState<Profile>({ name: '' })
   const [editProfileOpen, setEditProfileOpen] = useState(false)
   const [revealEmail, setRevealEmail] = useState(false)
+  const [deleteScheduledAt, setDeleteScheduledAt] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const maskEmail = (e: string) => {
     const at = e.indexOf('@')
     if (at <= 0) return e
@@ -653,46 +733,66 @@ export function ShareRoom() {
 
   // ----- engine + polling -----
   useEffect(() => {
-    let cachedProfile: Profile | null = null
-    try {
-      const cached = localStorage.getItem(PROFILE_KEY)
-      if (cached) cachedProfile = JSON.parse(cached) as Profile
-    } catch {
-      cachedProfile = null
+    let disposed = false
+    let timer: number | null = null
+
+    const teardown = () => {
+      disposed = true
+      if (timer != null) window.clearInterval(timer)
+      engineRef.current?.closeAll()
     }
 
-    let sn = cachedProfile?.name?.trim() || ''
-    if (!sn) {
-      const oldName = localStorage.getItem('share_room_name')
-      sn = (oldName || '').trim()
-    }
-    if (!sn) sn = 'Anônimo'
+    ;(async () => {
+      // ---- resolve a identidade (com backup no IndexedDB) ----
+      let cachedProfile: Profile | null = null
+      try {
+        const cached = localStorage.getItem(PROFILE_KEY)
+        if (cached) cachedProfile = JSON.parse(cached) as Profile
+      } catch {
+        cachedProfile = null
+      }
 
-    // Reutiliza o id salvo, para não criar "fantasma" ao recarregar a página.
-    let id = localStorage.getItem(CLIENT_KEY) || ''
-    if (!id) {
-      id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
-      localStorage.setItem(CLIENT_KEY, id)
-    }
+      let sn = cachedProfile?.name?.trim() || ''
+      if (!sn) {
+        const oldName = localStorage.getItem('share_room_name')
+        sn = (oldName || '').trim()
+      }
+      if (!sn) sn = 'Anônimo'
 
-    // Persiste o perfil (nome/ foto / bio) no navegador.
-    const saved: Profile = {
-      name: sn,
-      photo: cachedProfile?.photo,
-      bio: cachedProfile?.bio,
-      cover: cachedProfile?.cover,
-    }
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(saved))
+      // Reutiliza o id salvo para não criar "fantasma" ao recarregar a página.
+      // Se o localStorage foi limpo, recupera a MESMA identidade no IndexedDB,
+      // para o mesmo dispositivo voltar com a mesma conta anônima (sem duplicar).
+      let id = localStorage.getItem(CLIENT_KEY) || ''
+      if (!id) id = (await idbGet(CLIENT_KEY)) || ''
+      if (!id) {
+        id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+        localStorage.setItem(CLIENT_KEY, id)
+        void idbSet(CLIENT_KEY, id)
+      } else {
+        localStorage.setItem(CLIENT_KEY, id)
+      }
 
-    clientIdRef.current = id
-    nameRef.current = sn
-    setClientId(id)
-    setName(sn)
-    setProfile(saved)
-    profileRef.current = saved
-    registerPresence()
+      // Persiste o perfil (nome / foto / bio) no navegador e no IndexedDB.
+      const saved: Profile = {
+        name: sn,
+        photo: cachedProfile?.photo,
+        bio: cachedProfile?.bio,
+        cover: cachedProfile?.cover,
+      }
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(saved))
+      void idbSet(PROFILE_KEY, JSON.stringify(saved))
 
-    const engine = new RtcEngine(
+      if (disposed) return
+
+      clientIdRef.current = id
+      nameRef.current = sn
+      setClientId(id)
+      setName(sn)
+      setProfile(saved)
+      profileRef.current = saved
+      registerPresence()
+
+      const engine = new RtcEngine(
       id,
       sendSignalBody,
       {
@@ -808,19 +908,25 @@ export function ShareRoom() {
     }
 
     let syncCount = 0
-    let stopped = false
 
     const poll = async () => {
-      if (stopped) return
+      if (disposed) return
       try {
         const res = await apiClient.get<{
           messages: MailboxMessage[]
           members: Member[]
           offlineMembers: Member[]
+          deleteScheduledAt: number | null
         }>(`/api/rtc?action=mailbox&clientId=${clientIdRef.current}`)
         if (!res.success) return
         setOnlineMembers(res.data?.members ?? [])
         setOfflineMembers(res.data?.offlineMembers ?? [])
+        // Prazo de exclusão (anônimos): sincroniza do servidor. Quem entrou com
+        // Google usa o status da conta, então não sobrescreve pelo polling aqui.
+        if (!authUserRef.current) {
+          const dsa = res.data?.deleteScheduledAt ?? null
+          setDeleteScheduledAt((prev) => (prev === dsa ? prev : dsa))
+        }
         // Se a resposta não trouxer a lista de mensagens (ex.: banco temporariamente
         // indisponível), ignora este ciclo em vez de quebrar o loop de sincronização.
         if (Array.isArray(res.data?.messages)) {
@@ -841,14 +947,10 @@ export function ShareRoom() {
       }
     }
 
-    const timer = window.setInterval(poll, 250)
+    timer = window.setInterval(poll, 250)
     void poll()
-
-    return () => {
-      stopped = true
-      window.clearInterval(timer)
-      engine.closeAll()
-    }
+    })()
+    return teardown
   }, [sendSignalBody, settings.notifications, registerPresence])
 
   // ----- conta: carrega o usuário logado e o perfil salvo no servidor -----
@@ -861,6 +963,19 @@ export function ShareRoom() {
         const u = d?.user
         if (!u) return
         setAuth({ id: u.id, email: u.email })
+        // Carrega se há exclusão agendada para esta conta (status).
+        fetch('/api/account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'status' }),
+        })
+          .then((r) => r.json())
+          .then((s) => {
+            if (cancelled) return
+            if (typeof s?.deleteScheduledAt === 'number') setDeleteScheduledAt(s.deleteScheduledAt)
+            else if (s?.deleteScheduledAt === null) setDeleteScheduledAt(null)
+          })
+          .catch(() => {})
         // Puxa o perfil salvo (nome, bio, foto) da conta.
         return fetch('/api/profile')
           .then((r) => r.json())
@@ -1194,6 +1309,57 @@ export function ShareRoom() {
     setAuth(null)
     window.location.reload()
   }, [setAuth])
+
+  // ---- Exclusão de conta (carência de 3 dias + cancelar) ----
+  const scheduleDeleteAccount = useCallback(async () => {
+    setDeleting(true)
+    try {
+      const res = await apiClient.post<{ deleteScheduledAt: number | null }>('/api/account', {
+        action: 'schedule-delete',
+      })
+      if (res.success && res.data) setDeleteScheduledAt(res.data.deleteScheduledAt)
+    } finally {
+      setDeleting(false)
+    }
+  }, [])
+
+  const cancelDeleteAccount = useCallback(async () => {
+    setDeleting(true)
+    try {
+      const res = await apiClient.post<{ deleteScheduledAt: number | null }>('/api/account', {
+        action: 'cancel-delete',
+      })
+      if (res.success && res.data) setDeleteScheduledAt(res.data.deleteScheduledAt)
+    } finally {
+      setDeleting(false)
+    }
+  }, [])
+
+  const scheduleDeleteAnon = useCallback(async () => {
+    setDeleting(true)
+    try {
+      const res = await apiClient.post<{ deleteScheduledAt: number | null }>('/api/rtc', {
+        action: 'schedule-delete',
+        clientId: clientIdRef.current,
+      })
+      if (res.success && res.data) setDeleteScheduledAt(res.data.deleteScheduledAt)
+    } finally {
+      setDeleting(false)
+    }
+  }, [])
+
+  const cancelDeleteAnon = useCallback(async () => {
+    setDeleting(true)
+    try {
+      const res = await apiClient.post<{ deleteScheduledAt: number | null }>('/api/rtc', {
+        action: 'cancel-delete',
+        clientId: clientIdRef.current,
+      })
+      if (res.success && res.data) setDeleteScheduledAt(res.data.deleteScheduledAt)
+    } finally {
+      setDeleting(false)
+    }
+  }, [])
 
   const saveProfile = useCallback(async (next: Profile) => {
     // Nome único: não deixa duas pessoas usarem o mesmo nome.
@@ -2401,6 +2567,37 @@ export function ShareRoom() {
                       >
                         ⎋ {t('signOut')}
                       </button>
+
+                      {/* Exclusão da conta (3 dias de carência + cancelar) */}
+                      {deleteScheduledAt ? (
+                        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-3">
+                          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+                            ⏳ {t('deleteScheduled')}
+                          </div>
+                          <p className="mt-1 text-xs text-rose-100/70">{t('deleteCountdownHint')}</p>
+                          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                            <DeleteCountdown until={deleteScheduledAt} />
+                            <button
+                              type="button"
+                              onClick={() => void cancelDeleteAccount()}
+                              disabled={deleting}
+                              className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                            >
+                              💚 {t('cancelDelete')}
+                            </button>
+                          </div>
+                          <p className="mt-1.5 text-[11px] text-slate-400">{t('deleteStillWorks')}</p>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void scheduleDeleteAccount()}
+                          disabled={deleting}
+                          className="w-full rounded-xl bg-rose-500/10 px-4 py-3 text-left text-sm font-semibold text-rose-300 ring-1 ring-rose-400/20 transition hover:bg-rose-500/20 disabled:opacity-50"
+                        >
+                          🗑 {t('deleteAccount')}
+                        </button>
+                      )}
                     </>
                   ) : (
                     <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
@@ -2414,6 +2611,39 @@ export function ShareRoom() {
                         <span className="text-lg leading-none">🌐</span> {t('signInGoogle')}
                       </a>
                     </div>
+                  )}
+
+                  {/* Exclusão da conta anônima (3 dias de carência + cancelar) */}
+                  {!authUser && (
+                    deleteScheduledAt ? (
+                      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-3">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+                          ⏳ {t('deleteScheduled')}
+                        </div>
+                        <p className="mt-1 text-xs text-rose-100/70">{t('deleteCountdownHint')}</p>
+                        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                          <DeleteCountdown until={deleteScheduledAt} />
+                          <button
+                            type="button"
+                            onClick={() => void cancelDeleteAnon()}
+                            disabled={deleting}
+                            className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                          >
+                            💚 {t('cancelDelete')}
+                          </button>
+                        </div>
+                        <p className="mt-1.5 text-[11px] text-slate-400">{t('deleteStillWorks')}</p>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void scheduleDeleteAnon()}
+                        disabled={deleting}
+                        className="w-full rounded-xl bg-rose-500/10 px-4 py-3 text-left text-sm font-semibold text-rose-300 ring-1 ring-rose-400/20 transition hover:bg-rose-500/20 disabled:opacity-50"
+                      >
+                        🗑 {t('deleteAccountAnon')}
+                      </button>
+                    )
                   )}
                 </section>
               )}

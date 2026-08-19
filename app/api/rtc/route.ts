@@ -25,6 +25,13 @@ function readBody(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>
 }
 
+function clientIp(req: Request): string | null {
+  const fwd = req.headers.get('x-forwarded-for')
+  if (fwd) return fwd.split(',')[0].trim().slice(0, 64) || null
+  const via = req.headers.get('x-real-ip')
+  return via ? via.slice(0, 64) : null
+}
+
 // ---- GET: poll / sync / chat histórico
 export async function GET(req: Request) {
   try {
@@ -38,10 +45,12 @@ export async function GET(req: Request) {
         messages: MailboxMessage[]
         members: Member[]
         offlineMembers: Member[]
+        deleteScheduledAt: number | null
       }>({
         messages,
         members: await store.onlineMembers(),
         offlineMembers: await store.offlineMembers(),
+        deleteScheduledAt: clientId ? await store.getDeleteScheduledAt(clientId) : null,
       })
     }
 
@@ -92,7 +101,8 @@ export async function POST(req: Request) {
         bio,
         cover,
         channel as ChannelId,
-        user?.id ?? null
+        user?.id ?? null,
+        clientIp(req)
       )
       return ok<{ channel: ChannelId; members: Member[] }>({
         channel: result.channel,
@@ -108,7 +118,7 @@ export async function POST(req: Request) {
       const cover = typeof body.cover === 'string' ? body.cover : undefined
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       const user = await getCurrentUser()
-      await store.registerPresence(clientId, name, photo, bio, cover, user?.id ?? null)
+      await store.registerPresence(clientId, name, photo, bio, cover, user?.id ?? null, clientIp(req))
       return ok<{ ok: boolean }>({ ok: true })
     }
 
@@ -191,6 +201,21 @@ export async function POST(req: Request) {
       return ok<{ removed: Member | undefined }>({
         removed: await store.removeOfflineMember(clientId),
       })
+    }
+
+    if (action === 'schedule-delete') {
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      return ok<{ deleteScheduledAt: number | null }>({
+        deleteScheduledAt: await store.scheduleDelete(clientId),
+      })
+    }
+
+    if (action === 'cancel-delete') {
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      await store.cancelDelete(clientId)
+      return ok<{ deleteScheduledAt: null }>({ deleteScheduledAt: null })
     }
 
     if (action === 'admin-mute') {
