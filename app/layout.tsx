@@ -3,6 +3,7 @@ import Script from 'next/script';
 import { Analytics } from '@vercel/analytics/next';
 import { AgentationGuard } from '@/components/AgentationGuard';
 import { HappySeedsWatermark } from '@/components/HappySeedsWatermark';
+import { ConsentBanner } from '@/components/consent-banner';
 import './globals.css';
 import jsonMetadata from '../metadata.json';
 
@@ -30,6 +31,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         {children}
+        <ConsentBanner />
         <HappySeedsWatermark />
         <AgentationGuard />
         {process.env.NODE_ENV === 'production' && <Analytics />}

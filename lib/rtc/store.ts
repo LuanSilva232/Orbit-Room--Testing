@@ -18,7 +18,8 @@ export const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline
 export const SOLO_KICK_MS = 5 * 60 * 1000 // 5min sozinho no canal = sai do canal automaticamente
 export const ANON_MSG_MS = 24 * 60 * 60 * 1000 // mensagens de anônimos somem após 24h
 export const LOGGED_MSG_MS = 48 * 60 * 60 * 1000 // mensagens de contas logadas somem após 48h
-export const ANON_OFFLINE_MS = 15 * 60 * 1000 // anônimo offline é apagado após 15min
+export const ANON_OFFLINE_MS = 15 * 24 * 60 * 60 * 1000 // anônimo offline é apagado após 15 dias (cache temporário)
+export const DELETE_GRACE_MS = 3 * 24 * 60 * 60 * 1000 // 3 dias para "se arrepender" antes de excluir a conta
 
 type ClientRow = {
   client_id: string
@@ -128,8 +129,10 @@ async function purgeExpiredChat(): Promise<void> {
   `
 }
 
-// Apaga registros de ANÔNIMOS que ficaram offline por mais de 15min.
+// Apaga registros de ANÔNIMOS que ficaram offline por mais de 15 dias.
 // Quem fez login com o Google NUNCA é apagado por aqui (fica permanente).
+// O anônimo funciona como um "cache" temporário de 15 dias: sem ele voltar
+// nesse prazo, a conta é purgada e, se a pessoa retornar, nasce de novo.
 async function purgeExpiredAnon(): Promise<void> {
   const cutoff = nowMs() - ANON_OFFLINE_MS
   const rows = await getSql()<{ client_id: string }[]>`
@@ -144,7 +147,30 @@ async function purgeExpiredAnon(): Promise<void> {
   }
 }
 
-// Mantém o banco limpo: mensagens vencidas e anônimos offline antigos.
+// Apaga contas que tiveram a exclusão confirmada (carência de 3 dias já venceu).
+// Vale para anônimos (rtc_clients) e para quem entrou com Google (users).
+async function purgeExpiredDeletes(): Promise<void> {
+  const now = nowMs()
+  const anon = await getSql()<{ client_id: string }[]>`
+    SELECT client_id FROM rtc_clients
+    WHERE delete_scheduled_at IS NOT NULL AND delete_scheduled_at <= ${now}
+  `
+  for (const r of anon) {
+    await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${r.client_id}`
+    await getSql()`DELETE FROM rtc_clients WHERE client_id = ${r.client_id}`
+  }
+  const users = await getSql()<{ id: string }[]>`
+    SELECT id FROM users
+    WHERE delete_scheduled_at IS NOT NULL AND delete_scheduled_at <= ${now}
+  `
+  for (const u of users) {
+    // Remove também a presença/identidade do site vinculada à conta (cascade cuida do resto).
+    await getSql()`DELETE FROM rtc_clients WHERE user_id = ${u.id}`
+    await getSql()`DELETE FROM users WHERE id = ${u.id}`
+  }
+}
+
+// Mantém o banco limpo: mensagens vencidas, anônimos offline antigos e contas excluídas.
 // Roda com moderação (a cada ~1min por processo) para não pesar no polling.
 let lastMaintenanceMs = 0
 async function runMaintenance(force = false): Promise<void> {
@@ -153,6 +179,7 @@ async function runMaintenance(force = false): Promise<void> {
   lastMaintenanceMs = now
   await purgeExpiredChat()
   await purgeExpiredAnon()
+  await purgeExpiredDeletes()
 }
 
 /** Nome único: considera todos os registros (online E offline), exceto o próprio. */
@@ -210,7 +237,8 @@ export async function registerPresence(
   photo: string | undefined,
   bio: string | undefined,
   cover: string | undefined,
-  userId: string | null
+  userId: string | null,
+  ip: string | null = null
 ): Promise<void> {
   await ensureDb()
   const now = nowMs()
@@ -219,13 +247,14 @@ export async function registerPresence(
     await getSql()`
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null},
-          cover = ${cover ?? null}, user_id = ${userId}, last_seen = ${now}, left_at = NULL
+          cover = ${cover ?? null}, user_id = ${userId}, last_seen = ${now}, left_at = NULL,
+          last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
   } else {
     await getSql()`
-      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id)
-      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, 'geral', ${now}, ${now}, NULL, ${userId})
+      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, 'geral', ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
     `
   }
 }
@@ -237,7 +266,8 @@ export async function joinChannel(
   bio: string | undefined,
   cover: string | undefined,
   channel: ChannelId,
-  userId: string | null
+  userId: string | null,
+  ip: string | null = null
 ): Promise<{ ok: true; channel: ChannelId; members: Member[] }> {
   await ensureDb()
   const now = nowMs()
@@ -251,7 +281,8 @@ export async function joinChannel(
     await getSql()`
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null}, cover = ${cover ?? null},
-          user_id = ${userId}, last_seen = ${now}, left_at = NULL
+          user_id = ${userId}, last_seen = ${now}, left_at = NULL,
+          last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
     if (wasAway) {
@@ -289,13 +320,14 @@ export async function joinChannel(
       UPDATE rtc_clients
       SET channel = ${channel}, name = ${name}, photo = ${photo ?? null},
           bio = ${bio ?? null}, cover = ${cover ?? null}, user_id = ${userId},
-          last_seen = ${now}, left_at = NULL
+          last_seen = ${now}, left_at = NULL,
+          last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
   } else {
     await getSql()`
-      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id)
-      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, ${channel}, ${now}, ${now}, NULL, ${userId})
+      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, ${channel}, ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
     `
   }
 
@@ -563,6 +595,33 @@ export async function removeAllOffline(): Promise<Member[]> {
 export async function markSeen(clientId: string): Promise<void> {
   await ensureDb()
   await getSql()`UPDATE rtc_clients SET last_seen = ${nowMs()} WHERE client_id = ${clientId}`
+}
+
+/** Agenda a exclusão de um anônimo daqui a 3 dias; devolve o instante agendado. */
+export async function scheduleDelete(clientId: string): Promise<number | null> {
+  await ensureDb()
+  const at = nowMs() + DELETE_GRACE_MS
+  const res = await getSql()`
+    UPDATE rtc_clients SET delete_scheduled_at = ${at}, last_seen = ${nowMs()}
+    WHERE client_id = ${clientId}
+  `
+  return res.count && res.count > 0 ? at : null
+}
+
+/** Cancela uma exclusão agendada (o usuário "se arrependeu"). */
+export async function cancelDelete(clientId: string): Promise<void> {
+  await ensureDb()
+  await getSql()`UPDATE rtc_clients SET delete_scheduled_at = NULL WHERE client_id = ${clientId}`
+}
+
+/** Devolve o instante da exclusão agendada de um anônimo (ou null). */
+export async function getDeleteScheduledAt(clientId: string): Promise<number | null> {
+  await ensureDb()
+  const rows = await getSql()<{ delete_scheduled_at: string | number | null }[]>`
+    SELECT delete_scheduled_at FROM rtc_clients WHERE client_id = ${clientId}
+  `
+  const v = rows[0]?.delete_scheduled_at
+  return v == null ? null : Number(v)
 }
 
 /** Transmite um "mudo global" de um usuário para todos os clientes online (poder de admin). */

@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { toast, Toaster } from 'sonner'
 
+import { deviceAuthed, setDeviceAuthed } from './consent-banner'
 import { apiClient } from '@/lib/request'
 import { RtcEngine, DEFAULT_ICE } from '@/lib/rtc/rtc-engine'
 import {
@@ -336,6 +338,7 @@ function DeleteCountdown({ until }: { until: number }) {
 }
 
 export function ShareRoom() {
+  const router = useRouter()
   const [clientId, setClientId] = useState('')
   const [name, setName] = useState('')
   const [channel, setChannel] = useState<ChannelId>('geral')
@@ -961,8 +964,17 @@ export function ShareRoom() {
       .then((d) => {
         if (cancelled) return
         const u = d?.user
-        if (!u) return
+        if (!u) {
+          // Este aparelho já entrou com Google antes, mas a sessão expirou:
+          // pede para entrar de novo em vez de recriar um anônimo do zero.
+          if (deviceAuthed() && window.location.pathname !== '/login') {
+            window.location.replace('/login')
+          }
+          return
+        }
         setAuth({ id: u.id, email: u.email })
+        // Este aparelho já entrou com Google: marca para retomar o login depois.
+        setDeviceAuthed()
         // Carrega se há exclusão agendada para esta conta (status).
         fetch('/api/account', {
           method: 'POST',
@@ -1306,6 +1318,9 @@ export function ShareRoom() {
 
   const handleLogout = useCallback(async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    try {
+      localStorage.removeItem('orbit_authed_device') // sai: não força retorno ao login
+    } catch {}
     setAuth(null)
     window.location.reload()
   }, [setAuth])
