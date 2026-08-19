@@ -1948,10 +1948,16 @@ export function ShareRoom() {
       {/* Chat do canal */}
       <aside
         className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-4 lg:col-start-1 lg:row-start-2 lg:min-h-0 ${
-          mobileTab === 'chat' && inCall ? 'flex' : 'hidden'
+          mobileTab === 'chat' ? 'flex' : 'hidden'
         } ${inCall ? 'lg:flex' : 'lg:hidden'}`}
       >
-        {!inCall ? null : (
+        {!inCall ? (
+          <div className="flex flex-1 flex-col items-center justify-center text-center">
+            <div className="text-5xl">💬</div>
+            <h2 className="mt-4 text-xl font-bold">{t('chatTitle')}</h2>
+            <p className="mt-2 max-w-md text-sm text-slate-400">{t('locked')}</p>
+          </div>
+        ) : (
           <>
             <h3 className="text-sm font-semibold">{t('chatTitle')} · {channelLabel(channel)}</h3>
             <div className="relative mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
