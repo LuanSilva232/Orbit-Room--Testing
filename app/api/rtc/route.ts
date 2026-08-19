@@ -80,9 +80,10 @@ export async function POST(req: Request) {
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       const photo = typeof body.photo === 'string' ? body.photo : undefined
       const bio = typeof body.bio === 'string' ? body.bio : undefined
+      const cover = typeof body.cover === 'string' ? body.cover : undefined
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
-      const result = await store.joinChannel(clientId, name, photo, bio, channel as ChannelId)
+      const result = await store.joinChannel(clientId, name, photo, bio, cover, channel as ChannelId)
       if (result.ok === false) {
         throw new AppError('Este nome já está em uso', 409, 'NAME_TAKEN')
       }

@@ -113,6 +113,8 @@ const STRINGS = {
   channels: ['Canais de voz', 'Voice channels'],
   online: ['Online', 'Online'],
   noOnline: ['Ninguém online por enquanto', 'No one online yet'],
+  onlinePeople: ['Quem está online', 'Who is online'],
+  onlinePeopleDesc: ['Pessoas online e offline', 'Online and offline people'],
   leaveChannel: ['Sair do canal', 'Leave channel'],
   changeName: ['Trocar meu nome', 'Change my name'],
   chooseChannel: ['Escolha um canal de voz', 'Choose a voice channel'],
@@ -269,7 +271,7 @@ export function ShareRoom() {
   const [mutedPeers, setMutedPeers] = useState<Record<string, boolean>>({})
   const [recording, setRecording] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [configOpen, setConfigOpen] = useState(false)
   const [showNotifyPrompt, setShowNotifyPrompt] = useState(false)
   const [showMoreScreens, setShowMoreScreens] = useState(false)
   const [demoScreens, setDemoScreens] = useState<string[]>([])
@@ -304,6 +306,7 @@ export function ShareRoom() {
     | 'idioma'
     | 'limpeza'
     | 'sobre'
+    | 'online'
   >('menu')
 
   // ----- Preferências globais (persistidas no navegador) -----
@@ -627,9 +630,9 @@ export function ShareRoom() {
     let sn = cachedProfile?.name?.trim() || ''
     if (!sn) {
       const oldName = localStorage.getItem('share_room_name')
-      sn = (oldName || window.prompt('Como você quer ser chamado?')?.trim() || '').trim()
+      sn = (oldName || '').trim()
     }
-    if (!sn) sn = 'Anon'
+    if (!sn) sn = 'Anônimo'
 
     // Reutiliza o id salvo, para não criar "fantasma" ao recarregar a página.
     let id = localStorage.getItem(CLIENT_KEY) || ''
@@ -643,6 +646,7 @@ export function ShareRoom() {
       name: sn,
       photo: cachedProfile?.photo,
       bio: cachedProfile?.bio,
+      cover: cachedProfile?.cover,
     }
     localStorage.setItem(PROFILE_KEY, JSON.stringify(saved))
 
@@ -827,11 +831,33 @@ export function ShareRoom() {
           .then((r) => r.json())
           .then((p) => {
             if (cancelled || !p?.profile) return
-            const prof = p.profile as { name?: string; bio?: string | null; photo?: string | null }
-            const next: Profile = {
-              name: prof.name?.trim() || 'Anon',
-              photo: prof.photo ?? undefined,
-              bio: prof.bio ?? undefined,
+            const prof = p.profile as { name?: string; bio?: string | null; photo?: string | null; cover?: string | null }
+            // O perfil salvo no servidor tem dados? (conta nova fica em branco)
+            const serverHasData =
+              !!(prof.name?.trim() && prof.name.trim() !== 'Anônimo') ||
+              !!prof.photo ||
+              !!prof.bio ||
+              !!prof.cover
+            // O que o usuário já tinha preenchido localmente antes do login?
+            let local: Profile | null = null
+            try {
+              const raw = localStorage.getItem(PROFILE_KEY)
+              if (raw) local = JSON.parse(raw) as Profile
+            } catch {
+              local = null
+            }
+            const localHasData = !!local && !!(local.name && local.name !== 'Anônimo')
+            let next: Profile
+            if (!serverHasData && localHasData && local) {
+              // Conta recém-criada: aproveita o perfil local e salva automaticamente.
+              next = local
+            } else {
+              next = {
+                name: prof.name?.trim() || 'Anônimo',
+                photo: prof.photo ?? undefined,
+                bio: prof.bio ?? undefined,
+                cover: prof.cover ?? undefined,
+              }
             }
             profileRef.current = next
             setProfile(next)
@@ -843,6 +869,14 @@ export function ShareRoom() {
               localStorage.setItem(PROFILE_KEY, JSON.stringify(next))
             } catch {
               /* ignore */
+            }
+            // Garante que o perfil local é persistido na conta ao entrar.
+            if (!serverHasData && localHasData && local) {
+              void fetch('/api/profile', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: next.name, bio: next.bio, photo: next.photo, cover: next.cover }),
+              }).catch(() => {})
             }
           })
       })
@@ -1114,7 +1148,7 @@ export function ShareRoom() {
     void fetch('/api/profile', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: next.name, bio: next.bio, photo: next.photo }),
+      body: JSON.stringify({ name: next.name, bio: next.bio, photo: next.photo, cover: next.cover }),
     }).catch(() => {})
   }, [])
 
@@ -1140,6 +1174,7 @@ export function ShareRoom() {
         name: next.name,
         photo: next.photo,
         bio: next.bio,
+        cover: next.cover,
         channel: channelRef.current,
       }
     )
@@ -1153,6 +1188,7 @@ export function ShareRoom() {
       name: next,
       photo: profileRef.current.photo,
       bio: profileRef.current.bio,
+      cover: profileRef.current.cover,
     }
     localStorage.setItem(PROFILE_KEY, JSON.stringify(saved))
     persistProfileToServer(saved)
@@ -1168,6 +1204,7 @@ export function ShareRoom() {
         name: next,
         photo: saved.photo,
         bio: saved.bio,
+        cover: saved.cover,
         channel: channelRef.current,
       })
     }
@@ -1572,7 +1609,7 @@ export function ShareRoom() {
 
   return (
     <div
-      className={`theme-${settings.theme} flex h-dvh flex-col gap-3 overflow-hidden p-3 pb-24 lg:h-screen lg:grid lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[minmax(0,auto)_minmax(0,1fr)] lg:overflow-hidden lg:pb-3`}
+      className={`theme-${settings.theme} relative flex h-dvh flex-col gap-3 overflow-hidden p-3 pb-24 lg:h-screen lg:grid lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[minmax(0,auto)_minmax(0,1fr)] lg:overflow-hidden lg:pb-3`}
       onClick={() => {
         setViewProfile(null)
         setProfileMenuMsg(null)
@@ -1583,8 +1620,8 @@ export function ShareRoom() {
       {/* Sidebar */}
       <aside
         className={`share-panel flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl p-3 lg:col-start-1 lg:row-start-1 ${
-          mobileTab === 'inicio' ? 'flex' : 'hidden'
-        } lg:flex`}
+          !inCall ? 'lg:row-span-2' : ''
+        } ${mobileTab === 'inicio' ? 'flex' : 'hidden'} lg:flex`}
       >
         <div className="flex flex-col items-center px-1 pt-1 text-center">
           <img
@@ -1611,14 +1648,29 @@ export function ShareRoom() {
           >
             ⚙️
           </button>
+          <button
+            type="button"
+            title="Quem está online e offline"
+            onClick={() => {
+              setConfigPane('online')
+              setConfigOpen(true)
+              setMobileTab('config')
+            }}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition hover:bg-white/20"
+          >
+            👥
+          </button>
           <div
             role="button"
             tabIndex={0}
-            title="Configurações"
-            onClick={() => setSettingsOpen((o) => !o)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSettingsOpen((o) => !o) }}
+            title={t('configTitle')}
+            onClick={() => {
+              setConfigPane('perfil')
+              setConfigOpen(true)
+              setMobileTab('config')
+            }}
             className={`relative hidden h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition lg:flex ${
-              settingsOpen ? 'bg-white/20' : 'hover:bg-white/20'
+              configOpen ? 'bg-white/20' : 'hover:bg-white/20'
             }`}
           >
             🛠️
@@ -1645,7 +1697,7 @@ export function ShareRoom() {
 
         {/* Início: grade de categorias */}
         {inicioView === 'home' ? (
-          <div className="mt-6 grid flex-1 grid-cols-2 content-start gap-3">
+          <div className="my-auto grid grid-cols-2 gap-3">
             <button
               onClick={() => setInicioView('publicas')}
               className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/15 ring-1 ring-indigo-400/20 transition hover:scale-[1.03] hover:from-indigo-500/40 hover:to-fuchsia-500/25"
@@ -1741,80 +1793,6 @@ export function ShareRoom() {
         } lg:flex`}
       >
         {renderMain()}
-
-        {/* Configurações (Tema + Administrador) no canto superior direito */}
-        {settingsOpen && (
-          <div className="share-panel absolute right-3 top-3 z-30 hidden w-64 flex-col rounded-xl p-1 shadow-2xl lg:flex">
-            <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-              <span className="text-sm font-bold">{t('configTitle')}</span>
-              <button
-                onClick={() => setSettingsOpen(false)}
-                title={t('close')}
-                className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-xs transition hover:bg-white/20"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-              <span className="text-sm font-medium">{settings.theme === 'light' ? t('lightTheme') : t('darkTheme')}</span>
-              <button
-                role="switch"
-                aria-checked={settings.theme === 'light'}
-                title={settings.theme === 'light' ? t('darkTheme') : t('lightTheme')}
-                onClick={() => setSetting('theme', settings.theme === 'light' ? 'dark' : 'light')}
-                className={`relative h-5 w-9 rounded-full transition ${
-                  settings.theme === 'light' ? 'bg-amber-400' : 'bg-slate-600'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
-                    settings.theme === 'light' ? 'left-4' : 'left-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-            <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-              <span className="text-sm font-medium">{t('admin')}</span>
-              {!adminOn ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    const v = new FormData(e.currentTarget).get('adminPwd')
-                    void turnAdminOn(String(v))
-                  }}
-                  className="flex items-center gap-1"
-                >
-                  <input
-                    name="adminPwd"
-                    type="password"
-                    placeholder={t('password')}
-                    autoComplete="current-password"
-                    className="h-6 w-24 rounded border border-white/20 bg-white/5 px-1 text-xs outline-none"
-                  />
-                  <button
-                    type="submit"
-                    title="Enviar senha"
-                    className="flex h-6 w-6 items-center justify-center rounded bg-emerald-500/20 text-xs transition hover:bg-emerald-500/30"
-                  >
-                    →
-                  </button>
-                </form>
-              ) : (
-                <button
-                  role="switch"
-                  aria-checked={isAdmin}
-                  title={isAdmin ? 'Desativar modo administrador' : 'Ativar modo administrador'}
-                  onClick={() => setIsAdmin((o) => !o)}
-                  className={`relative h-5 w-9 rounded-full transition ${
-                    isAdmin ? 'bg-emerald-500' : 'bg-slate-600'
-                  }`}
-                >
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${isAdmin ? 'left-4' : 'left-0.5'}`} />
-                </button>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Barra de controle (só quando estiver numa sala de voz) */}
         {inCall && (
@@ -1924,58 +1902,18 @@ export function ShareRoom() {
       {/* Chat do canal */}
       <aside
         className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-4 lg:col-start-1 lg:row-start-2 lg:min-h-0 ${
-          mobileTab === 'chat' ? 'flex' : 'hidden'
-        } lg:flex`}
+          mobileTab === 'chat' && inCall ? 'flex' : 'hidden'
+        } ${inCall ? 'lg:flex' : 'lg:hidden'}`}
       >
-        {!inCall ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              {t('online')} ({onlineMembers.length})
-            </h3>
-            <div className="mt-2 flex-1 space-y-1 overflow-y-auto">
-              {onlineMembers.length === 0 ? (
-                <p className="py-8 text-center text-xs text-slate-500">{t('noOnline')}</p>
-              ) : (
-                onlineMembers.map((m) => (
-                  <div key={m.clientId} className="group flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
-                    <Avatar name={m.name} photo={m.photo} size={26} />
-                    <span className="min-w-0 flex-1 truncate">{m.name}</span>
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${m.channel === channel ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                    <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio }) }} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/5 hover:text-slate-200">⋯</button>
-                  </div>
-                ))
-              )}
-            </div>
-            {offlineMembers.length > 0 && (
-              <div className="share-panel-soft mt-3 rounded-lg p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">Offline ({offlineMembers.length})</span>
-                  <button onClick={() => void removeAllOffline()} className="rounded-md bg-red-500/20 px-2 py-1 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/30">🗑 Excluir todas</button>
-                </div>
-                <p className="mt-1 text-[10px] text-slate-500">Inativo há mais de 15 min · apague o registro para liberar o nome.</p>
-                <ul className="mt-1.5 space-y-1">
-                  {offlineMembers.map((m) => (
-                    <li key={m.clientId} className="flex items-center gap-2 text-xs text-slate-400">
-                      <Avatar name={m.name} photo={m.photo} size={20} />
-                      <span className="min-w-0 flex-1 truncate">{m.name}</span>
-                      {typeof m.lastSeen === 'number' && <span translate="no" title="Há quanto tempo saiu" className="shrink-0 text-[10px] tabular-nums text-slate-500">{formatAgo(m.lastSeen)}</span>}
-                      <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio }) }} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-slate-200">⋯</button>
-                      <button title="Apagar registro offline" onClick={() => void removeOfflineMember(m.clientId)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-red-300">✕</button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <button onClick={() => resetMyName()} title="Escolhe de novo o seu nome, sem precisar abrir o perfil" className="mt-3 w-full rounded-lg bg-emerald-500/20 px-3 py-2 text-left text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30">
-              ✏️ {t('changeName')}
-            </button>
-          </div>
-        ) : (
+        {!inCall ? null : (
           <>
             <h3 className="text-sm font-semibold">{t('chatTitle')} · {channelLabel(channel)}</h3>
             <div className="relative mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {chat.map((m) => (
                 <div key={m.id} className="share-panel-soft group relative rounded-lg px-3 py-2">
+                  {m.cover ? (
+                    <div className="-mx-3 -mt-2 mb-2 h-2 rounded-t-lg bg-cover bg-center" style={{ backgroundImage: `url(${m.cover})` }} />
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <p className="truncate text-[11px] text-slate-400">
                       <strong className="text-indigo-300">{m.author}</strong> · {new Date(m.time).toLocaleTimeString()}
@@ -2008,7 +1946,7 @@ export function ShareRoom() {
                     >
                       <button
                         onClick={() => {
-                          setViewProfile({ name: m.author, photo: m.photo, bio: m.bio })
+                          setViewProfile({ name: m.author, photo: m.photo, bio: m.bio, cover: m.cover })
                           setProfileMenuMsg(null)
                         }}
                         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-200 hover:bg-white/5"
@@ -2143,6 +2081,7 @@ export function ShareRoom() {
         <button
           onClick={() => {
             setConfigPane('menu')
+            setConfigOpen(true)
             setMobileTab('config')
           }}
           className={`flex w-16 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-semibold transition ${
@@ -2155,9 +2094,9 @@ export function ShareRoom() {
       </nav>
 
       {/* Painel de Configurações no mobile (perfil + avançadas) */}
-      {mobileTab === 'config' && (
-        <div className="share-panel fixed inset-3 z-40 flex flex-col overflow-hidden rounded-2xl p-4 lg:hidden">
-          <div className="flex items-center justify-between gap-2">
+      {(mobileTab === 'config' || configOpen) && (
+        <div className="share-panel fixed inset-0 z-40 flex flex-col overflow-hidden lg:inset-y-6 lg:left-1/2 lg:h-[88vh] lg:w-full lg:max-w-5xl lg:-translate-x-1/2 lg:flex-row lg:rounded-2xl lg:p-0">
+          <div className="flex items-center justify-between gap-2 p-4 lg:hidden">
             <div className="flex items-center gap-2">
               {configPane !== 'menu' && (
                 <button
@@ -2169,51 +2108,124 @@ export function ShareRoom() {
                 </button>
               )}
               <h3 className="text-base font-bold">
-                {({ menu: t('configTitle'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about') } as Record<string, string>)[configPane]}
+                {({ menu: t('configTitle'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople') } as Record<string, string>)[configPane]}
               </h3>
             </div>
             <button
-              onClick={() => setMobileTab('inicio')}
+              onClick={() => {
+                setConfigOpen(false)
+                setMobileTab('inicio')
+              }}
               className="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-slate-300 transition hover:bg-white/15"
             >
               {t('close')}
             </button>
           </div>
 
-          {configPane === 'menu' ? (
-            <div className="mt-4 flex flex-col gap-3 overflow-y-auto no-scrollbar">
-              {(
-                [
-                  ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
-                  ['audio', '🎙️', 'bg-sky-500/15', t('audioVideo'), t('audioDesc')],
-                  ['aparencia', '🎨', 'bg-fuchsia-500/15', t('appearance'), t('aparenciaDesc')],
-                  ['notificacoes', '🔔', 'bg-amber-500/15', t('notifications'), t('notificacoesDesc')],
-                  ['silencioso', '🤫', 'bg-slate-500/15', t('silentMode'), t('silenciosoDesc')],
-                  ['idioma', '🌐', 'bg-emerald-500/15', t('language'), t('idiomaDesc')],
-                  ['limpeza', '🧹', 'bg-red-500/15', t('cleanup'), t('limpezaDesc')],
-                  ['sobre', 'ℹ️', 'bg-cyan-500/15', t('about'), t('sobreDesc')],
-                  ['avancado', '🛠️', 'bg-emerald-500/15', t('advanced'), t('avancadoDesc')],
-                ] as const
-              ).map(([id, icon, bg, label, desc]) => (
-                <button
-                  key={id}
-                  onClick={() => setConfigPane(id)}
-                  className="share-panel-soft flex items-center gap-3 rounded-xl p-4 text-left transition hover:bg-white/5"
+          {/* Menu lateral — mobile (lista quando acessa o menu) */}
+          <div
+            className={`flex flex-col gap-3 overflow-y-auto no-scrollbar p-4 lg:hidden ${
+              configPane === 'menu' ? '' : 'hidden'
+            }`}
+          >
+            {(
+              [
+                ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
+                ['online', '👥', 'bg-emerald-500/15', t('onlinePeople'), t('onlinePeopleDesc')],
+                ['audio', '🎙️', 'bg-sky-500/15', t('audioVideo'), t('audioDesc')],
+                ['aparencia', '🎨', 'bg-fuchsia-500/15', t('appearance'), t('aparenciaDesc')],
+                ['notificacoes', '🔔', 'bg-amber-500/15', t('notifications'), t('notificacoesDesc')],
+                ['silencioso', '🤫', 'bg-slate-500/15', t('silentMode'), t('silenciosoDesc')],
+                ['idioma', '🌐', 'bg-emerald-500/15', t('language'), t('idiomaDesc')],
+                ['limpeza', '🧹', 'bg-red-500/15', t('cleanup'), t('limpezaDesc')],
+                ['sobre', 'ℹ️', 'bg-cyan-500/15', t('about'), t('sobreDesc')],
+                ['avancado', '🛠️', 'bg-emerald-500/15', t('advanced'), t('avancadoDesc')],
+              ] as const
+            ).map(([id, icon, bg, label, desc]) => (
+              <button
+                key={id}
+                onClick={() => setConfigPane(id)}
+                className="share-panel-soft flex items-center gap-3 rounded-xl p-4 text-left transition hover:bg-white/5"
+              >
+                <span
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg} text-xl`}
                 >
-                  <span
-                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg} text-xl`}
-                  >
-                    {icon}
-                  </span>
-                  <span>
-                    <span className="block text-sm font-semibold">{label}</span>
-                    <span className="block text-xs text-slate-400">{desc}</span>
-                  </span>
-                </button>
-              ))}
+                  {icon}
+                </span>
+                <span>
+                  <span className="block text-sm font-semibold">{label}</span>
+                  <span className="block text-xs text-slate-400">{desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Menu lateral — desktop (sempre visível) */}
+          <div className="hidden flex-col gap-1 overflow-y-auto no-scrollbar p-3 lg:flex lg:w-72 lg:shrink-0 lg:border-r lg:border-white/10">
+            <div className="mb-1 px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              ⚙️ {t('configTitle')}
             </div>
-          ) : (
-            <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto no-scrollbar pb-2">
+            {(
+              [
+                ['perfil', '👤', t('profile')],
+                ['online', '👥', t('onlinePeople')],
+                ['audio', '🎙️', t('audioVideo')],
+                ['aparencia', '🎨', t('appearance')],
+                ['notificacoes', '🔔', t('notifications')],
+                ['silencioso', '🤫', t('silentMode')],
+                ['idioma', '🌐', t('language')],
+                ['limpeza', '🧹', t('cleanup')],
+                ['sobre', 'ℹ️', t('about')],
+                ['avancado', '🛠️', t('advanced')],
+              ] as const
+            ).map(([id, icon, label]) => (
+              <button
+                key={id}
+                onClick={() => setConfigPane(id)}
+                className={`flex items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm font-semibold transition ${
+                  configPane === id
+                    ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/30'
+                    : 'text-slate-300 hover:bg-white/5'
+                }`}
+              >
+                <span className="w-6 text-center text-base leading-none">{icon}</span>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Conteúdo da categoria selecionada */}
+          <div
+            className={`min-h-0 flex-1 flex-col overflow-hidden ${
+              configPane === 'menu' ? 'hidden lg:flex' : 'mt-4 flex lg:mt-0'
+            }`}
+          >
+            {/* Cabeçalho desktop */}
+            <div className="hidden items-center justify-between border-b border-white/10 px-5 py-3 lg:flex">
+              <h3 className="text-base font-bold">
+                {({ perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), menu: t('configTitle') } as Record<string, string>)[configPane]}
+              </h3>
+              <button
+                onClick={() => {
+                  setConfigOpen(false)
+                  setMobileTab('inicio')
+                }}
+                className="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-slate-300 transition hover:bg-white/15"
+              >
+                ✕ {t('close')}
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto no-scrollbar pb-2 lg:p-5">
+              {configPane === 'menu' && (
+                <div className="hidden flex-1 items-center justify-center rounded-xl share-panel-soft p-6 text-center lg:flex">
+                  <div>
+                    <div className="text-3xl">⚙️</div>
+                    <p className="mt-2 text-sm text-slate-400">
+                      {settings.language === 'en' ? 'Choose a category on the left' : 'Escolha uma categoria à esquerda'}
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* Perfil */}
               {configPane === 'perfil' && (
                 <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
@@ -2241,6 +2253,48 @@ export function ShareRoom() {
                   >
                     ✏️ {t('changeName')}
                   </button>
+                </section>
+              )}
+
+              {/* Quem está online/offline */}
+              {configPane === 'online' && (
+                <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
+                  <div className="text-sm font-semibold">{t('online')} ({onlineMembers.length})</div>
+                  {onlineMembers.length === 0 ? (
+                    <p className="text-xs text-slate-500">{t('noOnline')}</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {onlineMembers.map((m) => (
+                        <div key={m.clientId} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
+                          <Avatar name={m.name} photo={m.photo} size={24} />
+                          <span className="min-w-0 flex-1 truncate">{m.name}</span>
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${m.channel === channel ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/5 hover:text-slate-200">⋯</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">Offline ({offlineMembers.length})</span>
+                    {offlineMembers.length > 0 && (
+                      <button onClick={() => void removeAllOffline()} className="rounded-md bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-300 transition hover:bg-red-500/30">🗑 Excluir</button>
+                    )}
+                  </div>
+                  {offlineMembers.length === 0 ? (
+                    <p className="text-xs text-slate-500">Ninguém offline no momento</p>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {offlineMembers.map((m) => (
+                        <li key={m.clientId} className="flex items-center gap-2 text-xs text-slate-400">
+                          <Avatar name={m.name} photo={m.photo} size={20} />
+                          <span className="min-w-0 flex-1 truncate">{m.name}</span>
+                          {typeof m.lastSeen === 'number' && <span translate="no" title="Há quanto tempo saiu" className="shrink-0 text-[10px] tabular-nums text-slate-500">{formatAgo(m.lastSeen)}</span>}
+                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-slate-200">⋯</button>
+                          <button title="Apagar registro offline" onClick={() => void removeOfflineMember(m.clientId)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-red-300">✕</button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </section>
               )}
 
@@ -2363,12 +2417,14 @@ export function ShareRoom() {
                 >
                   🗑 {t('deleteOffline')} ({offlineMembers.length})
                 </button>
-                <button
-                  onClick={() => setShowClearChats(true)}
-                  className="mt-2 w-full rounded-lg bg-indigo-500/15 px-3 py-2 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/25"
-                >
-                  💬 {t('clearAllChats')}
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowClearChats(true)}
+                    className="mt-2 w-full rounded-lg bg-indigo-500/15 px-3 py-2 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/25"
+                  >
+                    💬 {t('clearAllChats')}
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     try {
@@ -2471,7 +2527,7 @@ export function ShareRoom() {
               </>
               )}
             </div>
-          )}
+          </div>
         </div>
       )}
 
@@ -2577,8 +2633,8 @@ export function ShareRoom() {
         </div>
       )}
 
-      {/* Seletor de chat para limpar todas as conversas */}
-      {showClearChats && (
+      {/* Seletor de chat para limpar todas as conversas (só administrador) */}
+      {showClearChats && isAdmin && (
         <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/60 p-4">
           <div className="share-panel w-full max-w-sm rounded-2xl p-5">
             <div className="mb-1 flex items-center gap-2 text-base font-bold">💬 {t('clearAllChats')}</div>

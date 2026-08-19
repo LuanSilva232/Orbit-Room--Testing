@@ -8,6 +8,7 @@ export type Member = {
   lastSeen?: number
   photo?: string
   bio?: string
+  cover?: string
 }
 
 export type SignalKind = 'offer' | 'answer' | 'ice'
@@ -16,6 +17,7 @@ export type Profile = {
   name: string
   photo?: string
   bio?: string
+  cover?: string
 }
 
 export type ChatMessage = {
@@ -29,6 +31,7 @@ export type ChatMessage = {
   audioUrl?: string
   photo?: string
   bio?: string
+  cover?: string
 }
 
 export type Quality = 'auto' | 'baixa' | 'media' | 'alta'

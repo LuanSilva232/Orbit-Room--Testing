@@ -22,6 +22,7 @@ type ClientRow = {
   name: string
   photo: string | null
   bio: string | null
+  cover: string | null
   channel: string
   joined_at: string | number
   last_seen: string | number
@@ -50,12 +51,13 @@ function toMember(r: ClientRow): Member {
     lastSeen: Number(r.last_seen),
     photo: r.photo ?? undefined,
     bio: r.bio ?? undefined,
+    cover: r.cover ?? undefined,
   }
 }
 
 async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at, single_since
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since
     FROM rtc_clients WHERE client_id = ${clientId}
   `
   return rows[0]
@@ -63,7 +65,7 @@ async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
 
 async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
   return getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at, single_since
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since
     FROM rtc_clients
     WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
   `
@@ -121,7 +123,7 @@ export async function isNameTaken(
   await ensureDb()
   const n = name.trim().toLowerCase()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
     FROM rtc_clients
     WHERE lower(name) = ${n} AND client_id <> ${exceptClientId ?? ''}
   `
@@ -131,7 +133,7 @@ export async function isNameTaken(
 export async function onlineMembers(): Promise<Member[]> {
   await ensureDb()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
     FROM rtc_clients WHERE left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
   `
   return rows.map(toMember)
@@ -141,7 +143,7 @@ export async function onlineMembers(): Promise<Member[]> {
 export async function offlineMembers(): Promise<Member[]> {
   await ensureDb()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
     FROM rtc_clients
     WHERE left_at IS NOT NULL OR last_seen <= ${nowMs() - OFFLINE_MS}
   `
@@ -164,6 +166,7 @@ export async function joinChannel(
   name: string,
   photo: string | undefined,
   bio: string | undefined,
+  cover: string | undefined,
   channel: ChannelId
 ): Promise<
   | { ok: true; channel: ChannelId; members: Member[] }
@@ -180,7 +183,7 @@ export async function joinChannel(
     const wasAway = previous.left_at !== null && previous.left_at !== undefined
     await getSql()`
       UPDATE rtc_clients
-      SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null},
+      SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null}, cover = ${cover ?? null},
           last_seen = ${now}, left_at = NULL
       WHERE client_id = ${clientId}
     `
@@ -192,6 +195,7 @@ export async function joinChannel(
         joinedAt: Number(previous.joined_at),
         photo,
         bio,
+        cover,
       }
       await notifyChannel(channel, () => ({ type: 'peer-joined', member: rejoined }), clientId)
     } else {
@@ -216,13 +220,13 @@ export async function joinChannel(
     await getSql()`
       UPDATE rtc_clients
       SET channel = ${channel}, name = ${name}, photo = ${photo ?? null},
-          bio = ${bio ?? null}, last_seen = ${now}, left_at = NULL
+          bio = ${bio ?? null}, cover = ${cover ?? null}, last_seen = ${now}, left_at = NULL
       WHERE client_id = ${clientId}
     `
   } else {
     await getSql()`
-      INSERT INTO rtc_clients (client_id, name, photo, bio, channel, joined_at, last_seen, left_at)
-      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${channel}, ${now}, ${now}, NULL)
+      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, ${channel}, ${now}, ${now}, NULL)
     `
   }
 
@@ -233,6 +237,7 @@ export async function joinChannel(
     joinedAt: previous ? Number(previous.joined_at) : now,
     photo,
     bio,
+    cover,
   }
 
   await notifyChannel(channel, () => ({ type: 'peer-joined', member }), clientId)
@@ -333,12 +338,13 @@ export async function addChat(
     audioUrl: extra.audioUrl,
     photo: sender?.photo ?? undefined,
     bio: sender?.bio ?? undefined,
+    cover: sender?.cover ?? undefined,
   }
   await getSql()`
-    INSERT INTO rtc_chat (id, channel, member_id, author, text, time, type, audio_url, photo, bio)
+    INSERT INTO rtc_chat (id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover)
     VALUES (${message.id}, ${channel}, ${authorId}, ${message.author}, ${text},
             ${message.time}, ${extra.type ?? null}, ${extra.audioUrl ?? null},
-            ${sender?.photo ?? null}, ${sender?.bio ?? null})
+            ${sender?.photo ?? null}, ${sender?.bio ?? null}, ${sender?.cover ?? null})
   `
   await notifyChannel(channel, () => ({ type: 'chat', message }))
   return message
@@ -374,9 +380,10 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
     audio_url: string | null
     photo: string | null
     bio: string | null
+    cover: string | null
   }
   const rows = await getSql()<ChatRow[]>`
-    SELECT id, channel, member_id, author, text, time, type, audio_url, photo, bio
+    SELECT id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover
     FROM rtc_chat WHERE channel = ${channel} ORDER BY time DESC LIMIT 100
   `
   // Reverte a ordem para cronológica.
@@ -391,6 +398,7 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
     audioUrl: r.audio_url ?? undefined,
     photo: r.photo ?? undefined,
     bio: r.bio ?? undefined,
+    cover: r.cover ?? undefined,
   }))
 }
 
@@ -455,7 +463,7 @@ export async function removeOfflineMember(clientId: string): Promise<Member | un
 export async function removeAllOffline(): Promise<Member[]> {
   await ensureDb()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
     FROM rtc_clients
     WHERE left_at IS NOT NULL OR last_seen <= ${nowMs() - OFFLINE_MS}
   `

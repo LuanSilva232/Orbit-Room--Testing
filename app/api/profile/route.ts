@@ -13,6 +13,7 @@ export async function GET() {
       name: user.name,
       bio: user.bio,
       photo: user.photo,
+      cover: user.cover,
       rooms: user.rooms,
     },
   })
@@ -28,6 +29,7 @@ export async function PUT(req: NextRequest) {
     name?: string
     bio?: string
     photo?: string
+    cover?: string
     rooms?: unknown[]
   }
   try {
@@ -39,6 +41,7 @@ export async function PUT(req: NextRequest) {
   const name = typeof body.name === 'string' ? body.name.trim().slice(0, 60) : user.name
   const bio = typeof body.bio === 'string' ? body.bio.trim().slice(0, 240) : (user.bio ?? null)
   const photo = typeof body.photo === 'string' ? body.photo : (user.photo ?? null)
+  const cover = typeof body.cover === 'string' ? body.cover : (user.cover ?? null)
   const rooms = Array.isArray(body.rooms) ? body.rooms : user.rooms
 
   if (!name) {
@@ -50,10 +53,11 @@ export async function PUT(req: NextRequest) {
     SET display_name = ${name},
         bio = ${bio},
         photo = ${photo},
+        cover = ${cover},
         rooms = ${JSON.stringify(rooms)}::jsonb,
         updated_at = ${Date.now()}
     WHERE id = ${user.id}
   `
 
-  return NextResponse.json({ ok: true, profile: { name, bio, photo, rooms } })
+  return NextResponse.json({ ok: true, profile: { name, bio, photo, cover, rooms } })
 }

@@ -49,6 +49,10 @@ export function ensureDb(): Promise<void> {
           ADD COLUMN IF NOT EXISTS single_since bigint
       `
       await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS cover text
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS rtc_mailbox (
           id        bigserial PRIMARY KEY,
           to_client text NOT NULL,
@@ -74,6 +78,10 @@ export function ensureDb(): Promise<void> {
         )
       `
       await sql`
+        ALTER TABLE rtc_chat
+          ADD COLUMN IF NOT EXISTS cover text
+      `
+      await sql`
         CREATE INDEX IF NOT EXISTS rtc_chat_channel_idx
           ON rtc_chat (channel, time)
       `
@@ -94,10 +102,15 @@ export function ensureDb(): Promise<void> {
           display_name       text,
           bio                text,
           photo              text,
+          cover              text,
           rooms              jsonb NOT NULL DEFAULT '[]'::jsonb,
           created_at         bigint NOT NULL,
           updated_at         bigint NOT NULL
         )
+      `
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS cover text
       `
       await sql`
         CREATE TABLE IF NOT EXISTS oauth_accounts (

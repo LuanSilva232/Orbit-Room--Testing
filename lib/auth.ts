@@ -62,6 +62,7 @@ export interface SanitizedUser {
   name: string
   bio: string | null
   photo: string | null
+  cover: string | null
   rooms: unknown[]
 }
 
@@ -239,7 +240,7 @@ export async function getCurrentUser(): Promise<SanitizedUser | null> {
   const now = Date.now()
   await ensureDb()
   const rows = await getSql()`
-    SELECT u.id, u.email, u.display_name, u.bio, u.photo, u.rooms, u.status
+    SELECT u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.rooms, u.status
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ${sha256Hex(token)}
@@ -255,6 +256,7 @@ export async function getCurrentUser(): Promise<SanitizedUser | null> {
     name: (row.display_name as string) || '',
     bio: (row.bio as string | null) ?? null,
     photo: (row.photo as string | null) ?? null,
+    cover: (row.cover as string | null) ?? null,
     rooms: Array.isArray(row.rooms) ? (row.rooms as unknown[]) : [],
   }
 }
