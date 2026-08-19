@@ -1182,6 +1182,10 @@ export function ShareRoom() {
   }, [persistProfileToServer])
 
   const resetMyName = useCallback(() => {
+    if (!authUserRef.current) {
+      toast.error('Faça login com o Google para trocar seu nome.')
+      return
+    }
     const next = (window.prompt('Qual nome você quer usar?') || '').trim()
     if (!next) return
     const saved: Profile = {
@@ -2040,6 +2044,7 @@ export function ShareRoom() {
       <ProfileEditModal
         open={editProfileOpen}
         profile={profile}
+        authed={!!authUser}
         onClose={() => setEditProfileOpen(false)}
         onSave={(next) => {
           void saveProfile(next)
@@ -2238,6 +2243,11 @@ export function ShareRoom() {
                     <div className="text-xs text-slate-400">{t('publicProfile')}</div>
                     </div>
                   </div>
+                  {!authUser && (
+                    <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-200">
+                      Faça login com o Google para alterar seu nome, foto e bio.
+                    </div>
+                  )}
                   <button
                     onClick={() => {
                       setEditProfileOpen(true)

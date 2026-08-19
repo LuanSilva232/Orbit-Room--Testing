@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 /** Ícone de perfil quadrado (foto ou iniciais com cor derivada do nome). */
@@ -133,17 +133,33 @@ export function ProfileEditModal({
   profile,
   onClose,
   onSave,
+  authed = true,
 }: {
   open: boolean
   profile: Profile
   onClose: () => void
   onSave: (next: Profile) => void
+  authed?: boolean
 }) {
   const [bio, setBio] = useState(profile.bio ?? '')
   const [photo, setPhoto] = useState(profile.photo)
   const [cover, setCover] = useState(profile.cover)
   const [name, setName] = useState(profile.name ?? '')
   const [busy, setBusy] = useState(false)
+  const [wasOpen, setWasOpen] = useState(false)
+
+  // Toda vez que o modal abre, recarrega os dados salvos do perfil.
+  // Evita o bug em que o nome e a foto (do Google) sumiam ao reabrir.
+  useEffect(() => {
+    if (open && !wasOpen) {
+      setBio(profile.bio ?? '')
+      setPhoto(profile.photo)
+      setCover(profile.cover)
+      setName(profile.name ?? '')
+    }
+    setWasOpen(open)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const fileRef = useRef<HTMLInputElement | null>(null)
   const coverRef = useRef<HTMLInputElement | null>(null)
@@ -215,6 +231,8 @@ export function ProfileEditModal({
 
   return (
     <Modal open={open} onClose={() => !busy && onClose()}>
+      {authed ? (
+      <>
       {/* Faixa de destaque no topo (capa ou gradiente) */}
       {cover ? (
         <div className="absolute inset-x-0 top-0 h-24 bg-cover bg-center" style={{ backgroundImage: `url(${cover})` }} />
@@ -329,6 +347,30 @@ export function ProfileEditModal({
           Salvar
         </button>
       </div>
+      </>
+      ) : (
+      <div className="relative py-6 text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-indigo-500/20 text-3xl">
+          🔒
+        </div>
+        <h2 className="mt-4 text-lg font-extrabold tracking-tight">Perfil bloqueado</h2>
+        <p className="mt-2 text-sm leading-relaxed text-slate-400">
+          Faça login com o Google para alterar seu nome, foto e bio. Sem login, o perfil fica em modo de leitura.
+        </p>
+        <button
+          onClick={() => window.location.assign('/login')}
+          className="mt-6 w-full rounded-xl bg-indigo-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-400"
+        >
+          Entrar com o Google
+        </button>
+        <button
+          onClick={onClose}
+          className="mt-2 w-full rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-white/15"
+        >
+          Fechar
+        </button>
+      </div>
+      )}
     </Modal>
   )
 }
