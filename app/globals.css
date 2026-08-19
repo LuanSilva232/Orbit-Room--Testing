@@ -191,6 +191,11 @@ body {
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+/* Painel sem blur de fundo (para telas grandes onde o blur causa travamento no hover) */
+.share-panel-flat {
+  backdrop-filter: none;
+}
+
 /* ---------- Tema claro (preferência em Configurações → Aparência) ---------- */
 .theme-light {
   color-scheme: light;

@@ -2355,7 +2355,7 @@ export function ShareRoom() {
 
       {/* Painel de Configurações no mobile (perfil + avançadas) */}
       {(mobileTab === 'config' || configOpen) && (
-        <div className="share-panel fixed inset-0 z-40 flex flex-col overflow-hidden lg:inset-y-6 lg:left-1/2 lg:h-[88vh] lg:w-full lg:max-w-5xl lg:-translate-x-1/2 lg:flex-row lg:rounded-2xl lg:p-0">
+        <div className="share-panel share-panel-flat fixed inset-0 z-40 flex flex-col overflow-hidden lg:inset-y-6 lg:left-1/2 lg:h-[88vh] lg:w-full lg:max-w-5xl lg:-translate-x-1/2 lg:flex-row lg:rounded-2xl lg:p-0">
           <div className="flex items-center justify-between gap-2 p-4 lg:hidden">
             <div className="flex items-center gap-2">
               {configPane !== 'menu' && (
@@ -2406,7 +2406,7 @@ export function ShareRoom() {
               <button
                 key={id}
                 onClick={() => setConfigPane(id)}
-                className="share-panel-soft flex items-center gap-3 rounded-xl p-4 text-left transition hover:bg-white/5"
+                className="share-panel-soft flex items-center gap-3 rounded-xl p-4 text-left transition-colors duration-100 hover:bg-white/5"
               >
                 <span
                   className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg} text-xl`}
@@ -2444,7 +2444,7 @@ export function ShareRoom() {
               <button
                 key={id}
                 onClick={() => setConfigPane(id)}
-                className={`flex items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm font-semibold transition ${
+                className={`flex items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm font-semibold transition-colors duration-100 ${
                   configPane === id
                     ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/30'
                     : 'text-slate-300 hover:bg-white/5'
