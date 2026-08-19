@@ -1285,7 +1285,7 @@ export function ShareRoom() {
         (m) => typeof m.lastSeen === 'number' && Date.now() - m.lastSeen < OFFLINE_MS
       )
       if (recent) {
-        toast.warning('Ainda não passaram 15 minutos — aguarde para liberar 븙 o nome')
+        toast.warning('Ainda não passaram 15 minutos — aguarde para liberar o nome')
         return
       }
     }

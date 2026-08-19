@@ -13,12 +13,16 @@ export function getSql(): Sql {
   const url = process.env.DATABASE_URL
   if (!url) throw new Error('DATABASE_URL não configurada')
   // prepare:false evita prepared statements reutilizados de forma incorreta atrás de poolers.
-  // max:4 mantém mais de uma conexão em voo — um `max:1` fazia o pool inteiro
-  // travar quando uma única consulta travava no banco em nuvem.
+  // max: mantém várias conexões em voo. Um pool muito pequeno (ex.: max:4) satura
+  // sob rajada de usuários simultâneos e pode ficar com conexões presas, travando
+  // todas as requisições com banco. O pool em nuvem aceita bem mais de 20 conexões.
+  // max_lifetime recicla conexões periodicamente, evitando que conexões antigas/
+  // quebradas fiquem presas no pool para sempre.
   client = postgres(url, {
-    max: 4,
+    max: 10,
     idle_timeout: 20,
     connect_timeout: 10,
+    max_lifetime: 30 * 60,
     prepare: false,
   })
   return client
