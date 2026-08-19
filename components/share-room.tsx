@@ -184,6 +184,14 @@ const STRINGS = {
   limpezaDesc: ['Excluir offline e restaurar padrão', 'Remove offline and reset defaults'],
   sobreDesc: ['Nome, créditos e versão', 'Name, credits and version'],
   avancadoDesc: ['Administrador e mais', 'Admin and more'],
+  account: ['Minha conta', 'My account'],
+  accountDesc: ['Entrar com o Google e gerenciar sua conta', 'Sign in with Google and manage your account'],
+  accountInfo: ['Suas informações da conta Google', 'Your Google account info'],
+  accountEditHint: ['Para editar nome, foto e fundo, vá em Meu Perfil.', 'To edit name, photo and background, go to My Profile.'],
+  notConnected: ['Você não está conectado', 'You are not signed in'],
+  accountSignInHint: ['Entre com o Google para salvar e sincronizar seu perfil.', 'Sign in with Google to save and sync your profile.'],
+  signInGoogle: ['Entrar com o Google', 'Sign in with Google'],
+  signOut: ['Sair da conta', 'Sign out'],
   lightTheme: ['Tema claro', 'Light theme'],
   darkTheme: ['Tema escuro', 'Dark theme'],
   notifyDesc: ['Aviso quando alguém entra na sala', 'Notify when someone joins the room'],
@@ -298,6 +306,7 @@ export function ShareRoom() {
   // Sub-tela do painel de Configurações no mobile (cada categoria abre a sua).
   const [configPane, setConfigPane] = useState<
     | 'menu'
+    | 'conta'
     | 'perfil'
     | 'avancado'
     | 'audio'
@@ -1721,16 +1730,7 @@ export function ShareRoom() {
           >
             🛠️
           </div>
-          {authUser ? (
-            <button
-              type="button"
-              title="Sair da conta"
-              onClick={() => void handleLogout()}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition hover:bg-rose-500/30"
-            >
-              ⎋
-            </button>
-          ) : (
+          {!authUser && (
             <a
               href="/login"
               title="Entrar para salvar seu perfil"
@@ -2168,7 +2168,7 @@ export function ShareRoom() {
                 </button>
               )}
               <h3 className="text-base font-bold">
-                {({ menu: t('configTitle'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople') } as Record<string, string>)[configPane]}
+                {({ menu: t('configTitle'), conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople') } as Record<string, string>)[configPane]}
               </h3>
             </div>
             <button
@@ -2190,6 +2190,7 @@ export function ShareRoom() {
           >
             {(
               [
+                ['conta', '🔑', 'bg-indigo-500/20', t('account'), t('accountDesc')],
                 ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
                 ['online', '👥', 'bg-emerald-500/15', t('onlinePeople'), t('onlinePeopleDesc')],
                 ['audio', '🎙️', 'bg-sky-500/15', t('audioVideo'), t('audioDesc')],
@@ -2227,6 +2228,7 @@ export function ShareRoom() {
             </div>
             {(
               [
+                ['conta', '🔑', t('account')],
                 ['perfil', '👤', t('profile')],
                 ['online', '👥', t('onlinePeople')],
                 ['audio', '🎙️', t('audioVideo')],
@@ -2263,7 +2265,7 @@ export function ShareRoom() {
             {/* Cabeçalho desktop */}
             <div className="hidden items-center justify-between border-b border-white/10 px-5 py-3 lg:flex">
               <h3 className="text-base font-bold">
-                {({ perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), menu: t('configTitle') } as Record<string, string>)[configPane]}
+                {({ conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), menu: t('configTitle') } as Record<string, string>)[configPane]}
               </h3>
               <button
                 onClick={() => {
@@ -2318,6 +2320,78 @@ export function ShareRoom() {
                   >
                     ✏️ {t('changeName')}
                   </button>
+                </section>
+              )}
+
+              {/* Minha conta (login com Google) */}
+              {configPane === 'conta' && (
+                <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-500/20 text-xl">
+                      🔑
+                    </span>
+                    <div>
+                      <div className="text-sm font-semibold">{t('account')}</div>
+                      <div className="text-xs text-slate-400">{t('accountInfo')}</div>
+                    </div>
+                  </div>
+
+                  {authUser ? (
+                    <>
+                      {/* Fundo / papel de parede (não editável aqui) */}
+                      <div
+                        className="h-24 w-full rounded-xl bg-cover bg-center ring-1 ring-white/10"
+                        style={
+                          profile.cover
+                            ? { backgroundImage: `url(${profile.cover})` }
+                            : undefined
+                        }
+                      >
+                        {!profile.cover && (
+                          <div className="flex h-full w-full items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 to-fuchsia-500/10 text-3xl">
+                            🖼️
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <Avatar
+                          name={profile.name || name}
+                          photo={profile.photo}
+                          size={56}
+                          isAnonymous={false}
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-base font-bold">{profile.name || name}</div>
+                          <div className="truncate text-xs text-slate-400">{authUser.email}</div>
+                        </div>
+                      </div>
+
+                      <p className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs leading-relaxed text-slate-400">
+                        💡 {t('accountEditHint')}
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleLogout()}
+                        className="mt-1 w-full rounded-xl bg-rose-500/20 px-4 py-3 text-left text-sm font-semibold text-rose-200 ring-1 ring-rose-400/30 transition hover:bg-rose-500/30"
+                      >
+                        ⎋ {t('signOut')}
+                      </button>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
+                      <div className="text-4xl">🔑</div>
+                      <div className="text-sm font-semibold">{t('notConnected')}</div>
+                      <p className="max-w-xs text-xs text-slate-400">{t('accountSignInHint')}</p>
+                      <a
+                        href="/login"
+                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110"
+                      >
+                        <span className="text-lg leading-none">🌐</span> {t('signInGoogle')}
+                      </a>
+                    </div>
+                  )}
                 </section>
               )}
 
