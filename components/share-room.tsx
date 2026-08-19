@@ -2310,9 +2310,12 @@ export function ShareRoom() {
       )}
 
       {/* Barra inferior de categorias (só mobile) */}
-      <nav className="share-panel fixed inset-x-3 bottom-3 z-40 flex items-center gap-1 rounded-2xl p-2 shadow-2xl lg:hidden">
+      <nav className="share-panel fixed inset-x-3 bottom-3 z-50 flex items-center gap-1 rounded-2xl p-2 shadow-2xl lg:hidden">
         <button
-          onClick={() => setMobileTab('inicio')}
+          onClick={() => {
+            setConfigOpen(false)
+            setMobileTab('inicio')
+          }}
           className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-semibold transition ${
             mobileTab === 'inicio' ? 'bg-indigo-500/25 text-indigo-200' : 'text-slate-400 hover:bg-white/5'
           }`}
@@ -2321,7 +2324,10 @@ export function ShareRoom() {
           {t('homeTab')}
         </button>
         <button
-          onClick={() => setMobileTab('chamadas')}
+          onClick={() => {
+            setConfigOpen(false)
+            setMobileTab('chamadas')
+          }}
           className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-semibold transition ${
             mobileTab === 'chamadas' ? 'bg-indigo-500/25 text-indigo-200' : 'text-slate-400 hover:bg-white/5'
           }`}
@@ -2330,7 +2336,10 @@ export function ShareRoom() {
           {t('callTab')}
         </button>
         <button
-          onClick={() => setMobileTab('chat')}
+          onClick={() => {
+            setConfigOpen(false)
+            setMobileTab('chat')
+          }}
           className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-semibold transition ${
             mobileTab === 'chat' ? 'bg-indigo-500/25 text-indigo-200' : 'text-slate-400 hover:bg-white/5'
           }`}
@@ -2371,20 +2380,22 @@ export function ShareRoom() {
                 {({ menu: t('configTitle'), conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople') } as Record<string, string>)[configPane]}
               </h3>
             </div>
-            <button
-              onClick={() => {
-                setConfigOpen(false)
-                setMobileTab('inicio')
-              }}
-              className="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-slate-300 transition hover:bg-white/15"
-            >
-              {t('close')}
-            </button>
+            {configPane !== 'menu' && (
+              <button
+                onClick={() => {
+                  setConfigOpen(false)
+                  setMobileTab('inicio')
+                }}
+                className="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-slate-300 transition hover:bg-white/15"
+              >
+                {t('close')}
+              </button>
+            )}
           </div>
 
           {/* Menu lateral — mobile (lista quando acessa o menu) */}
           <div
-            className={`flex flex-col gap-3 overflow-y-auto no-scrollbar p-4 lg:hidden ${
+            className={`flex flex-col gap-3 overflow-y-auto no-scrollbar p-4 pb-28 lg:hidden ${
               configPane === 'menu' ? '' : 'hidden'
             }`}
           >
@@ -2477,7 +2488,7 @@ export function ShareRoom() {
                 ✕ {t('close')}
               </button>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto no-scrollbar pb-2 lg:p-5">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto no-scrollbar pb-28 lg:p-5">
               {configPane === 'menu' && (
                 <div className="hidden flex-1 items-center justify-center rounded-xl share-panel-soft p-6 text-center lg:flex">
                   <div>
