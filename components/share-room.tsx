@@ -157,6 +157,13 @@ const STRINGS = {
   onlinePeople: ['Amigos online', 'Friends online'],
   onlinePeopleDesc: ['Só os seus amigos (online e offline)', 'Only your friends (online and offline)'],
   friendsOnline: ['Amigos online', 'Friends online'],
+  amigos: ['Convites', 'Invites'],
+  amigosDesc: ['Enviar/aceitar convites e copiar seu código', 'Send/accept invites and copy your code'],
+  amigosLocked: ['Login com Google obrigatório', 'Google sign-in required'],
+  amigosLockedHint: [
+    'Para gerenciar amigos e convites, entre com sua conta Google.',
+    'To manage friends and invites, sign in with your Google account.',
+  ],
   leaveChannel: ['Sair do canal', 'Leave channel'],
   changeName: ['Trocar meu nome', 'Change my name'],
   chooseChannel: ['Escolha um canal de voz', 'Choose a voice channel'],
@@ -386,6 +393,9 @@ export function ShareRoom() {
     setAuthUser(u)
   }, [])
 
+  // Contador de convites de amizade pendentes (selo vermelho na subcategoria Amigos).
+  const [pendingCount, setPendingCount] = useState(0)
+
   // Categoria ativa no mobile (barra inferior). Desktop não usa.
   const [mobileTab, setMobileTab] = useState<'inicio' | 'chamadas' | 'chat' | 'config'>('inicio')
   const [inicioView, setInicioView] = useState<'home' | 'publicas' | 'privadas' | 'criar' | 'minhas'>('home')
@@ -403,6 +413,7 @@ export function ShareRoom() {
     | 'limpeza'
     | 'sobre'
     | 'online'
+    | 'amigos'
   >('menu')
 
   // ----- Preferências globais (persistidas no navegador) -----
@@ -1044,6 +1055,31 @@ export function ShareRoom() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ----- selo de convites pendentes (Amigos) -----
+  useEffect(() => {
+    if (!authUser) {
+      setPendingCount(0)
+      return
+    }
+    let stop = false
+    const poll = () => {
+      fetch('/api/social')
+        .then((r) => r.json())
+        .then((d) => {
+          if (stop) return
+          const n = Array.isArray(d?.requests) ? d.requests.length : 0
+          setPendingCount(n)
+        })
+        .catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 8000)
+    return () => {
+      stop = true
+      clearInterval(id)
+    }
+  }, [authUser])
 
   // ----- join / leave channel + profile -----
   const joinChannel = useCallback(
@@ -2377,7 +2413,7 @@ export function ShareRoom() {
                 </button>
               )}
               <h3 className="text-base font-bold">
-                {({ menu: t('configTitle'), conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople') } as Record<string, string>)[configPane]}
+                {({ menu: t('configTitle'), conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), amigos: t('amigos') } as Record<string, string>)[configPane]}
               </h3>
             </div>
             {configPane !== 'menu' && (
@@ -2403,6 +2439,7 @@ export function ShareRoom() {
               [
                 ['conta', '🔑', 'bg-indigo-500/20', t('account'), t('accountDesc')],
                 ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
+                ['amigos', '🤝', 'bg-emerald-500/15', t('amigos'), t('amigosDesc')],
                 ['online', '👥', 'bg-emerald-500/15', t('onlinePeople'), t('onlinePeopleDesc')],
                 ['audio', '🎙️', 'bg-sky-500/15', t('audioVideo'), t('audioDesc')],
                 ['aparencia', '🎨', 'bg-fuchsia-500/15', t('appearance'), t('aparenciaDesc')],
@@ -2417,7 +2454,7 @@ export function ShareRoom() {
               <button
                 key={id}
                 onClick={() => setConfigPane(id)}
-                className="share-panel-soft flex items-center gap-3 rounded-xl p-4 text-left transition-colors duration-100 hover:bg-white/5"
+                className="share-panel-soft relative flex items-center gap-3 rounded-xl p-4 text-left transition-colors duration-100 hover:bg-white/5"
               >
                 <span
                   className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg} text-xl`}
@@ -2428,6 +2465,11 @@ export function ShareRoom() {
                   <span className="block text-sm font-semibold">{label}</span>
                   <span className="block text-xs text-slate-400">{desc}</span>
                 </span>
+                {id === 'amigos' && pendingCount > 0 && (
+                  <span className="absolute right-3 top-3 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white shadow-lg shadow-rose-500/40">
+                    {pendingCount > 9 ? '+9' : pendingCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -2441,6 +2483,7 @@ export function ShareRoom() {
               [
                 ['conta', '🔑', t('account')],
                 ['perfil', '👤', t('profile')],
+                ['amigos', '🤝', t('amigos')],
                 ['online', '👥', t('onlinePeople')],
                 ['audio', '🎙️', t('audioVideo')],
                 ['aparencia', '🎨', t('appearance')],
@@ -2455,7 +2498,7 @@ export function ShareRoom() {
               <button
                 key={id}
                 onClick={() => setConfigPane(id)}
-                className={`flex items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm font-semibold transition-colors duration-100 ${
+                className={`relative flex items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm font-semibold transition-colors duration-100 ${
                   configPane === id
                     ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/30'
                     : 'text-slate-300 hover:bg-white/5'
@@ -2463,6 +2506,11 @@ export function ShareRoom() {
               >
                 <span className="w-6 text-center text-base leading-none">{icon}</span>
                 {label}
+                {id === 'amigos' && pendingCount > 0 && (
+                  <span className="absolute right-2 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-lg shadow-rose-500/40">
+                    {pendingCount > 9 ? '+9' : pendingCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -2476,7 +2524,7 @@ export function ShareRoom() {
             {/* Cabeçalho desktop */}
             <div className="hidden items-center justify-between border-b border-white/10 px-5 py-3 lg:flex">
               <h3 className="text-base font-bold">
-                {({ conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), menu: t('configTitle') } as Record<string, string>)[configPane]}
+                {({ conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), amigos: t('amigos'), menu: t('configTitle') } as Record<string, string>)[configPane]}
               </h3>
               <button
                 onClick={() => {
@@ -2639,11 +2687,6 @@ export function ShareRoom() {
                           🗑 {t('deleteAccount')}
                         </button>
                       )}
-
-                      {/* Amigos: convites, código e lista (só contas Google) */}
-                      <div className="mt-2 border-t border-white/10 pt-4">
-                        <FriendsPanel />
-                      </div>
                     </>
                   ) : (
                     <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
@@ -2700,6 +2743,29 @@ export function ShareRoom() {
                   <div className="text-sm font-semibold">🤝 {t('friendsOnline')}</div>
                   <FriendsOnline />
                 </section>
+              )}
+
+              {/* Amigos: convites, código e lista */}
+              {configPane === 'amigos' && (
+                authUser ? (
+                  <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
+                    <FriendsPanel />
+                  </section>
+                ) : (
+                  <section className="share-panel-soft flex flex-col items-center gap-3 rounded-xl p-6 text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 text-3xl">
+                      🔒
+                    </div>
+                    <div className="text-sm font-semibold">{t('amigosLocked')}</div>
+                    <p className="max-w-xs text-xs text-slate-400">{t('amigosLockedHint')}</p>
+                    <a
+                      href="/login"
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110"
+                    >
+                      <span className="text-lg leading-none">🌐</span> {t('signInGoogle')}
+                    </a>
+                  </section>
+                )
               )}
 
               {/* Áudio e vídeo */}
