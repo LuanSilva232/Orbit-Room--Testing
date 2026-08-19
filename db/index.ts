@@ -103,6 +103,10 @@ export function ensureDb(): Promise<void> {
       `
       await sql`
         ALTER TABLE rtc_chat
+          ADD COLUMN IF NOT EXISTS user_id text
+      `
+      await sql`
+        ALTER TABLE rtc_chat
           ADD COLUMN IF NOT EXISTS expires_at bigint
       `
       await sql`
@@ -143,6 +147,42 @@ export function ensureDb(): Promise<void> {
       await sql`
         ALTER TABLE users
           ADD COLUMN IF NOT EXISTS last_ip text
+      `
+      // --- Sistema social (amigos, convites e seguidores) ---
+      // Código de amigo de 6 caracteres (letras + números), único por conta.
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS friend_code text
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_requests (
+          id         text PRIMARY KEY,
+          from_id    text NOT NULL,
+          to_id      text NOT NULL,
+          status     text NOT NULL DEFAULT 'pending',
+          created_at bigint NOT NULL,
+          UNIQUE (from_id, to_id)
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS social_requests_to_idx
+          ON social_requests (to_id, status)
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_friends (
+          user_a  text NOT NULL,
+          user_b  text NOT NULL,
+          created_at bigint NOT NULL,
+          PRIMARY KEY (user_a, user_b)
+        )
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_follows (
+          follower_id text NOT NULL,
+          followee_id text NOT NULL,
+          created_at   bigint NOT NULL,
+          PRIMARY KEY (follower_id, followee_id)
+        )
       `
       await sql`
         CREATE TABLE IF NOT EXISTS oauth_accounts (

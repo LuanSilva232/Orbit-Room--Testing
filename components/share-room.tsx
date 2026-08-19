@@ -20,7 +20,10 @@ import {
   type SignalKind,
 } from '@/lib/rtc/types'
 
-import { AnonProfileModal, Avatar, ProfileEditModal, ProfileViewModal } from './modals'
+import { AnonProfileModal, Avatar, ProfileEditModal } from './modals'
+import { ProfileViewModal } from './profile-popup'
+import { FriendsPanel } from './friends-panel'
+import { FriendsOnline } from './friends-online'
 
 const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline ("fantasma")
 
@@ -77,18 +80,6 @@ async function idbSet(key: string, value: string): Promise<void> {
 }
 
 type Remote = { name: string; streams: MediaStream[] }
-
-// Mostra quanto tempo se passou desde um instante, em linguagem curta ("há 3 min", "há 2 h").
-const formatAgo = (ts: number): string => {
-  const diff = Math.max(0, Date.now() - ts)
-  const minutes = Math.floor(diff / 60_000)
-  if (minutes < 1) return 'agora'
-  if (minutes < 60) return `há ${minutes} min`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `há ${hours} h`
-  const days = Math.floor(hours / 24)
-  return `há ${days} d`
-}
 
 type Tile = {
   id: string
@@ -163,8 +154,9 @@ const STRINGS = {
   channels: ['Canais de voz', 'Voice channels'],
   online: ['Online', 'Online'],
   noOnline: ['Ninguém online por enquanto', 'No one online yet'],
-  onlinePeople: ['Quem está online', 'Who is online'],
-  onlinePeopleDesc: ['Pessoas online e offline', 'Online and offline people'],
+  onlinePeople: ['Amigos online', 'Friends online'],
+  onlinePeopleDesc: ['Só os seus amigos (online e offline)', 'Only your friends (online and offline)'],
+  friendsOnline: ['Amigos online', 'Friends online'],
   leaveChannel: ['Sair do canal', 'Leave channel'],
   changeName: ['Trocar meu nome', 'Change my name'],
   chooseChannel: ['Escolha um canal de voz', 'Choose a voice channel'],
@@ -367,7 +359,7 @@ export function ShareRoom() {
     const stars = u.length <= 3 ? '*'.repeat(u.length) : `${u.slice(0, 2)}${'*'.repeat(u.length - 2)}`
     return `${stars}${d}`
   }
-  const [viewProfile, setViewProfile] = useState<Profile | null>(null)
+  const [viewProfile, setViewProfile] = useState<(Profile & { userId?: string }) | null>(null)
   const [viewAnonProfile, setViewAnonProfile] = useState<{ name: string } | null>(null)
   const [profileMenuMsg, setProfileMenuMsg] = useState<string | null>(null)
 
@@ -1480,19 +1472,6 @@ export function ShareRoom() {
     }
   }, [isAdmin, offlineMembers])
 
-  const removeOfflineMember = useCallback(async (memberId: string) => {
-    if (!isAdmin) {
-      const recent = offlineMembers.some(
-        (m) => typeof m.lastSeen === 'number' && Date.now() - m.lastSeen < OFFLINE_MS
-      )
-      if (recent) {
-        toast.warning('Ainda não passaram 15 minutos — aguarde para liberar o nome')
-        return
-      }
-    }
-    await apiClient.post('/api/rtc', { action: 'remove-member', clientId: memberId })
-  }, [isAdmin, offlineMembers])
-
   // ----- grelha (layout dinâmico) -----
   const tiles: Tile[] = []
   if (inCall) {
@@ -2186,7 +2165,7 @@ export function ShareRoom() {
                           if (m.isAnonymous) {
                             setViewAnonProfile({ name: m.author })
                           } else {
-                            setViewProfile({ name: m.author, photo: m.photo, bio: m.bio, cover: m.cover })
+                            setViewProfile({ name: m.author, photo: m.photo, bio: m.bio, cover: m.cover, userId: m.userId })
                           }
                           setProfileMenuMsg(null)
                         }}
@@ -2194,6 +2173,42 @@ export function ShareRoom() {
                       >
                         👤 Ver perfil
                       </button>
+                      {!m.isAnonymous && m.userId && authUser && m.userId !== authUser.id && (
+                        <>
+                          <button
+                            onClick={() => {
+                              void fetch('/api/social', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'send-request', toUserId: m.userId }),
+                              })
+                                .then((r) => r.json())
+                                .then((res) =>
+                                  toast(res?.ok ? res.message || 'Convite enviado!' : res?.message || 'Não foi possível adicionar')
+                                )
+                              setProfileMenuMsg(null)
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-emerald-300 hover:bg-white/5"
+                          >
+                            🤝 Adicionar amigo
+                          </button>
+                          <button
+                            onClick={() => {
+                              void fetch('/api/social', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'follow', userId: m.userId }),
+                              })
+                                .then((r) => r.json())
+                                .then((res) => toast(res?.ok ? 'Você agora segue esta pessoa.' : res?.message || 'Não foi possível seguir'))
+                              setProfileMenuMsg(null)
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-indigo-200 hover:bg-white/5"
+                          >
+                            ➕ Seguir
+                          </button>
+                        </>
+                      )}
                       <button
                         onClick={() => {
                           setPendingDeleteMe(m.id)
@@ -2288,7 +2303,7 @@ export function ShareRoom() {
         }}
       />
       {viewProfile && (
-        <ProfileViewModal profile={viewProfile} onClose={() => setViewProfile(null)} />
+        <ProfileViewModal profile={viewProfile} currentUserId={authUser?.id} onClose={() => setViewProfile(null)} />
       )}
       {viewAnonProfile && (
         <AnonProfileModal name={viewAnonProfile.name} onClose={() => setViewAnonProfile(null)} />
@@ -2613,6 +2628,11 @@ export function ShareRoom() {
                           🗑 {t('deleteAccount')}
                         </button>
                       )}
+
+                      {/* Amigos: convites, código e lista (só contas Google) */}
+                      <div className="mt-2 border-t border-white/10 pt-4">
+                        <FriendsPanel />
+                      </div>
                     </>
                   ) : (
                     <div className="flex flex-col items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
@@ -2666,42 +2686,8 @@ export function ShareRoom() {
               {/* Quem está online/offline */}
               {configPane === 'online' && (
                 <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
-                  <div className="text-sm font-semibold">{t('online')} ({onlineMembers.length})</div>
-                  {onlineMembers.length === 0 ? (
-                    <p className="text-xs text-slate-500">{t('noOnline')}</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {onlineMembers.map((m) => (
-                        <div key={m.clientId} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
-                          <Avatar name={m.name} photo={m.photo} size={24} isAnonymous={m.isAnonymous} />
-                          <span className="min-w-0 flex-1 truncate">{m.name}</span>
-                          <span className={`h-2 w-2 shrink-0 rounded-full ${m.channel === channel ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); if (m.isAnonymous) setViewAnonProfile({ name: m.name }); else setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/5 hover:text-slate-200">⋯</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">Offline ({offlineMembers.length})</span>
-                    {offlineMembers.length > 0 && (
-                      <button onClick={() => void removeAllOffline()} className="rounded-md bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-300 transition hover:bg-red-500/30">🗑 Excluir</button>
-                    )}
-                  </div>
-                  {offlineMembers.length === 0 ? (
-                    <p className="text-xs text-slate-500">Ninguém offline no momento</p>
-                  ) : (
-                    <ul className="space-y-0.5">
-                      {offlineMembers.map((m) => (
-                        <li key={m.clientId} className="flex items-center gap-2 text-xs text-slate-400">
-                          <Avatar name={m.name} photo={m.photo} size={20} isAnonymous={m.isAnonymous} />
-                          <span className="min-w-0 flex-1 truncate">{m.name}</span>
-                          {typeof m.lastSeen === 'number' && <span translate="no" title="Há quanto tempo saiu" className="shrink-0 text-[10px] tabular-nums text-slate-500">{formatAgo(m.lastSeen)}</span>}
-                          <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); if (m.isAnonymous) setViewAnonProfile({ name: m.name }); else setViewProfile({ name: m.name, photo: m.photo, bio: m.bio, cover: m.cover }) }} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-slate-200">⋯</button>
-                          <button title="Apagar registro offline" onClick={() => void removeOfflineMember(m.clientId)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-red-300">✕</button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  <div className="text-sm font-semibold">🤝 {t('friendsOnline')}</div>
+                  <FriendsOnline />
                 </section>
               )}
 

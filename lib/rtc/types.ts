@@ -10,6 +10,7 @@ export type Member = {
   bio?: string
   cover?: string
   isAnonymous: boolean
+  userId?: string
 }
 
 export type SignalKind = 'offer' | 'answer' | 'ice'
@@ -34,6 +35,7 @@ export type ChatMessage = {
   bio?: string
   cover?: string
   isAnonymous: boolean
+  userId?: string
 }
 
 export type Quality = 'auto' | 'baixa' | 'media' | 'alta'

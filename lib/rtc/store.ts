@@ -9,6 +9,7 @@ import type {
   SignalKind,
 } from './types'
 import { ensureDb, getSql } from '@/db'
+import { AppError } from '@/lib/errors'
 
 // Estado da sala (presença, sinalização, chat e compartilhamento de tela)
 // persistido no banco em nuvem. Isso permite funcionar em hospedagens
@@ -20,6 +21,7 @@ export const ANON_MSG_MS = 24 * 60 * 60 * 1000 // mensagens de anônimos somem a
 export const LOGGED_MSG_MS = 48 * 60 * 60 * 1000 // mensagens de contas logadas somem após 48h
 export const ANON_OFFLINE_MS = 15 * 24 * 60 * 60 * 1000 // anônimo offline é apagado após 15 dias (cache temporário)
 export const DELETE_GRACE_MS = 3 * 24 * 60 * 60 * 1000 // 3 dias para "se arrepender" antes de excluir a conta
+export const MAX_PUBLIC_MEMBERS = 10 // limite por sala pública, para não travar (lentidão)
 
 type ClientRow = {
   client_id: string
@@ -58,6 +60,7 @@ function toMember(r: ClientRow): Member {
     bio: r.bio ?? undefined,
     cover: r.cover ?? undefined,
     isAnonymous: !r.user_id,
+    userId: r.user_id ?? undefined,
   }
 }
 
@@ -120,6 +123,11 @@ async function pushExistingScreenKinds(to: string, channel: ChannelId): Promise<
 
 export function isChannel(channel: string): boolean {
   return ['geral', 'sala-1', 'sala-2', 'sala-3'].includes(channel)
+}
+
+// Salas públicas (com limite de pessoas). Salas privadas futuras não usam.
+export function isPublicChannel(channel: string): boolean {
+  return isChannel(channel)
 }
 
 // Apaga mensagens de chat cujo prazo de validade expirou.
@@ -273,6 +281,21 @@ export async function joinChannel(
   const now = nowMs()
   const previous = await getClientRow(clientId)
 
+  // Limite por sala pública (para não sobrecarregar a sala de voz).
+  if (isPublicChannel(channel) && previous?.channel !== channel) {
+    const active = await getSql()<{ c: string | number }[]>`
+      SELECT COUNT(*) AS c FROM rtc_clients
+      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${now - ANON_OFFLINE_MS}
+    `
+    if (Number(active[0]?.c ?? 0) >= MAX_PUBLIC_MEMBERS) {
+      throw new AppError(
+        `Esta sala está cheia (limite de ${MAX_PUBLIC_MEMBERS} pessoas). Tente outra sala.`,
+        409,
+        'ROOM_FULL'
+      )
+    }
+  }
+
   if (previous && previous.channel === channel) {
     // Reentrada no MESMO canal. Se o usuário tinha saído (left_at preenchido),
     // é uma nova entrada de fato: avisa os demais como peer-joined para que
@@ -295,6 +318,7 @@ export async function joinChannel(
         bio,
         cover,
         isAnonymous: !userId,
+        userId: userId ?? undefined,
       }
       await notifyChannel(channel, () => ({ type: 'peer-joined', member: rejoined }), clientId)
     } else {
@@ -340,6 +364,7 @@ export async function joinChannel(
     bio,
     cover,
     isAnonymous: !userId,
+    userId: userId ?? undefined,
   }
 
   await notifyChannel(channel, () => ({ type: 'peer-joined', member }), clientId)
@@ -443,14 +468,15 @@ export async function addChat(
     bio: sender?.bio ?? undefined,
     cover: sender?.cover ?? undefined,
     isAnonymous,
+    userId: userId ?? undefined,
   }
   const expiresAt = now + (isAnonymous ? ANON_MSG_MS : LOGGED_MSG_MS)
   await getSql()`
-    INSERT INTO rtc_chat (id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover, is_anonymous, expires_at)
+    INSERT INTO rtc_chat (id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover, is_anonymous, user_id, expires_at)
     VALUES (${message.id}, ${channel}, ${authorId}, ${message.author}, ${text},
             ${message.time}, ${extra.type ?? null}, ${extra.audioUrl ?? null},
             ${sender?.photo ?? null}, ${sender?.bio ?? null}, ${sender?.cover ?? null},
-            ${isAnonymous}, ${expiresAt})
+            ${isAnonymous}, ${userId ?? null}, ${expiresAt})
   `
   await notifyChannel(channel, () => ({ type: 'chat', message }))
   return message
@@ -489,9 +515,10 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
     bio: string | null
     cover: string | null
     is_anonymous: boolean | null
+    user_id: string | null
   }
   const rows = await getSql()<ChatRow[]>`
-    SELECT id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover, is_anonymous
+    SELECT id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover, is_anonymous, user_id
     FROM rtc_chat WHERE channel = ${channel} ORDER BY time DESC LIMIT 100
   `
   // Reverte a ordem para cronológica.
@@ -508,6 +535,7 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
     bio: r.bio ?? undefined,
     cover: r.cover ?? undefined,
     isAnonymous: r.is_anonymous !== false,
+    userId: r.user_id ?? undefined,
   }))
 }
 
