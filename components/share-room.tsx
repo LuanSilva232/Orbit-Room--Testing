@@ -24,6 +24,7 @@ const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline ("fantasma")
 
 const CLIENT_KEY = 'share_room_client_id'
 const PROFILE_KEY = 'share_room_profile'
+const NOTIFY_ASKED_KEY = 'share_room_notify_asked'
 
 type Remote = { name: string; streams: MediaStream[] }
 
@@ -49,13 +50,23 @@ type Tile = {
   muted: boolean
   isScreen?: boolean
   photo?: string
+  simulated?: boolean
 }
 
 const QUALITY_CONSTRAINTS: Record<Quality, MediaTrackConstraints> = {
   auto: {},
-  baixa: { frameRate: { ideal: 15 }, width: { ideal: 640 } },
-  media: { frameRate: { ideal: 24 }, width: { ideal: 960 } },
-  alta: { frameRate: { ideal: 30 }, width: { ideal: 1280 } },
+  baixa: { frameRate: { max: 15, ideal: 15 }, width: { max: 640, ideal: 640 } },
+  media: { frameRate: { max: 24, ideal: 24 }, width: { max: 960, ideal: 960 } },
+  alta: { frameRate: { max: 30, ideal: 30 }, width: { max: 1280, ideal: 1280 } },
+}
+
+// Limite de taxa de bits (bps) de envio por qualidade. Evita que o upload de
+// tela sature a conexão e cause travadas para quem está assistindo.
+const QUALITY_BITRATES: Record<Quality, number> = {
+  auto: 0, // sem limite
+  baixa: 600_000, // ~600 kbps
+  media: 1_200_000, // ~1.2 Mbps
+  alta: 2_500_000, // ~2.5 Mbps
 }
 
 // Interruptor (switch) reutilizável das Configurações.
@@ -96,6 +107,144 @@ function SwitchRow({
   )
 }
 
+// Traduções PT/EN dos textos mais visíveis da interface.
+const STRINGS = {
+  subtitle: ['Canais de voz para conversar', 'Voice channels to talk'],
+  channels: ['Canais de voz', 'Voice channels'],
+  online: ['Online', 'Online'],
+  noOnline: ['Ninguém online por enquanto', 'No one online yet'],
+  leaveChannel: ['Sair do canal', 'Leave channel'],
+  changeName: ['Trocar meu nome', 'Change my name'],
+  chooseChannel: ['Escolha um canal de voz', 'Choose a voice channel'],
+  chooseHintFull: [
+    'Vá até a aba Salas e toque num canal para entrar na chamada.',
+    'Go to the Rooms tab and tap a channel to join the call.',
+  ],
+  seeRooms: ['Ver salas', 'See rooms'],
+  roomTab: ['Salas', 'Rooms'],
+  homeTab: ['Início', 'Home'],
+  publicRooms: ['Salas Públicas', 'Public Rooms'],
+  privateRooms: ['Salas Privadas', 'Private Rooms'],
+  createRoom: ['Criar salas', 'Create rooms'],
+  myRooms: ['Minhas salas', 'My rooms'],
+  publicRoomsDesc: ['Canais abertos para todo mundo', 'Open channels for everyone'],
+  privateRoomsDesc: ['Salas fechadas por convite', 'Rooms closed by invite'],
+  createRoomDesc: ['Crie a sua própria sala', 'Create your own room'],
+  myRoomsDesc: ['As salas em que você participa', 'The rooms you take part in'],
+  comingSoon: ['Em breve', 'Coming soon'],
+  callTab: ['Chamadas', 'Calls'],
+  chatTab: ['Chat', 'Chat'],
+  configTab: ['Config', 'Settings'],
+  configTitle: ['Configurações', 'Settings'],
+  chatTitle: ['Chat do canal', 'Channel chat'],
+  locked: [
+    'Entre em um canal de voz para conversar no chat.',
+    'Join a voice channel to talk in the chat.',
+  ],
+  writeMsg: ['Escreva uma mensagem...', 'Write a message...'],
+  send: ['Enviar', 'Send'],
+  micOn: ['Microfone', 'Microphone'],
+  muted: ['Mudo', 'Muted'],
+  camOn: ['Câmera ligada', 'Camera on'],
+  camTurn: ['Ligar câmera', 'Turn on camera'],
+  screenStop: ['Parar tela', 'Stop sharing'],
+  screenShare: ['Compartilhar tela', 'Share screen'],
+  screenAudio: ['Áudio na tela', 'Screen audio'],
+  screenNoAudio: ['Sem áudio', 'No audio'],
+  currentQuality: ['Qualidade atual', 'Current quality'],
+  qualityHint: ['use Baixa p/ travar menos', 'use Low for less lag'],
+  back: ['Voltar', 'Back'],
+  close: ['Fechar', 'Close'],
+  profile: ['Perfil', 'Profile'],
+  audioVideo: ['Áudio e vídeo', 'Audio & video'],
+  appearance: ['Aparência', 'Appearance'],
+  notifications: ['Notificações', 'Notifications'],
+  silentMode: ['Modo silencioso', 'Silent mode'],
+  language: ['Idioma', 'Language'],
+  cleanup: ['Limpeza', 'Cleanup'],
+  about: ['Sobre', 'About'],
+  advanced: ['Configurações avançadas', 'Advanced settings'],
+  voice: ['voz', 'voice'],
+  editProfile: ['Editar perfil', 'Edit profile'],
+  noName: ['Sem nome', 'No name'],
+  publicProfile: ['Seu perfil público nas salas', 'Your public profile in rooms'],
+  volume: ['Volume do som', 'Sound volume'],
+  micVolume: ['Volume do microfone', 'Microphone volume'],
+  noiseEcho: ['Ruído e eco', 'Noise and echo'],
+  cancelEcho: ['Cancelamento de eco', 'Echo cancellation'],
+  noiseSup: ['Supressão de ruído', 'Noise suppression'],
+  perfilDesc: ['Seu nome, bio e foto', 'Your name, bio and photo'],
+  audioDesc: ['Volume, ruído, eco e qualidade', 'Volume, noise, echo and quality'],
+  aparenciaDesc: ['Tema escuro ou claro', 'Dark or light theme'],
+  notificacoesDesc: ['Aviso quando alguém entra', 'Notify when someone joins'],
+  silenciosoDesc: ['Entrar sem ligar o microfone', 'Join without enabling mic'],
+  idiomaDesc: ['Português ou inglês', 'Portuguese or English'],
+  limpezaDesc: ['Excluir offline e restaurar padrão', 'Remove offline and reset defaults'],
+  sobreDesc: ['Nome, créditos e versão', 'Name, credits and version'],
+  avancadoDesc: ['Administrador e mais', 'Admin and more'],
+  lightTheme: ['Tema claro', 'Light theme'],
+  darkTheme: ['Tema escuro', 'Dark theme'],
+  notifyDesc: ['Aviso quando alguém entra na sala', 'Notify when someone joins the room'],
+  notifyJoined: ['entrou em', 'joined'],
+  notifyLeft: ['saiu de', 'left'],
+  notifyBodyJoined: ['Um participante entrou na chamada.', 'A participant joined the call.'],
+  notifyBodyLeft: ['Um participante saiu da chamada.', 'A participant left the call.'],
+  notifyPromptTitle: ['Ativar notificações?', 'Enable notifications?'],
+  notifyPromptDesc: ['Quer que o Orbit Room te avise quando alguém entra ou sai das chamadas, e quando estiver online?', 'Want Orbit Room to notify you when someone joins or leaves calls, and when online?'],
+  notifyPromptYes: ['Sim, ativar', 'Yes, enable'],
+  notifyPromptLater: ['Agora não', 'Not now'],
+  seeMoreScreens: ['Ver mais telas', 'See more screens'],
+  whoIsSharing: ['Compartilhando tela', 'Screen sharing'],
+  screensSharing: ['compartilhando tela', 'sharing screen'],
+  screenSimLabel: ['Simulação', 'Simulation'],
+  addDemoScreen: ['Simular compartilhar', 'Simulate sharing'],
+  clearDemo: ['Limpar', 'Clear'],
+  demoBanner: ['Modo de teste — simulação de telas', 'Test mode — simulated screens'],
+  screenMute: ['Mutar som da tela', 'Mute screen sound'],
+  screenUnmute: ['Ativar som da tela', 'Unmute screen sound'],
+  screenShort: ['tela', 'screen'],
+  watchScreen: ['Assistir', 'Watch'],
+  closeWatch: ['Fechar', 'Close'],
+  soloKickedTitle: ['Você foi removido da sala', 'You were removed from the room'],
+  soloKicked: [
+    'Você ficou sozinho(a) no canal por mais de 5 minutos e foi removido(a) automaticamente para não deixar um perfil vazio.',
+    'You were alone in the channel for over 5 minutes and were automatically removed to avoid leaving an empty profile.',
+  ],
+  gotIt: ['Entendi', 'Got it'],
+  yes: ['Sim', 'Yes'],
+  no: ['Não', 'No'],
+  confirmDeleteTitle: ['Apagar mensagem', 'Delete message'],
+  confirmDeleteMsg: [
+    'Tem certeza que quer apagar esta mensagem?',
+    'Are you sure you want to delete this message?',
+  ],
+  confirmClearTitle: ['Limpar conversa', 'Clear chat'],
+  confirmClearMsg: [
+    'Tem certeza que quer apagar todas as conversas deste chat? Isso não pode ser desfeito.',
+    'Are you sure you want to delete all messages in this chat? This cannot be undone.',
+  ],
+  clearAllChats: ['Limpar todos os chats', 'Clear all chats'],
+  clearAllChatsDesc: [
+    'Escolha um chat para apagar todas as conversas',
+    'Choose a chat to delete all conversations',
+  ],
+  chatClearedOk: ['Conversas apagadas', 'Chat cleared'],
+  nowWatching: ['Assistindo agora', 'Watching now'],
+  silentDesc: ['Entrar nas salas sem ativar o microfone', 'Join rooms without enabling the mic'],
+  deleteOffline: ['Excluir perfis offline', 'Delete offline profiles'],
+  deleteAllOffline: ['Excluir todos os offline', 'Delete all offline'],
+  restorePrefs: ['Restaurar preferências padrão', 'Restore default preferences'],
+  admin: ['Administrador', 'Admin'],
+  password: ['Senha', 'Password'],
+  noiseLabel: ['Ruído', 'Noise'],
+  echoLabel: ['Eco', 'Echo'],
+  aboutText: [
+    'Orbit Room é um aplicativo de canais de voz e vídeo onde você entra em salas para conversar com outras pessoas em tempo real. Dentro de cada sala dá para falar pelo microfone, ligar a câmera, compartilhar a tela e trocar mensagens de texto com quem está online.\n\nFeito para reunir pessoas: entre numa sala, veja quem está por lá, converse à vontade e, se quiser, compartilhe o que está vendo. O Orbit Room nasceu para aproximar pessoas e facilitar conversas ao vivo — do jeito mais simples e direto.',
+    'Orbit Room is a voice and video channels app where you join rooms to talk with other people in real time. Inside each room you can speak through the mic, turn on your camera, share your screen, and exchange text messages with whoever is online.\n\nMade to bring people together: join a room, see who is there, chat freely and, if you like, share what you are seeing. Orbit Room was created to bring people closer and make live conversations easy — in the simplest, most direct way.',
+  ],
+  aboutCredits: ['Criado por Noah · v0.5', 'Created by Noah · v0.5'],
+} as const
+
 export function ShareRoom() {
   const [clientId, setClientId] = useState('')
   const [name, setName] = useState('')
@@ -109,6 +258,7 @@ export function ShareRoom() {
   const [camOn, setCamOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
   const [screenStreaming, setScreenStreaming] = useState(false)
+  const [screenWithAudio, setScreenWithAudio] = useState(false)
   const [quality, setQuality] = useState<Quality>('auto')
 
   const [profile, setProfile] = useState<Profile>({ name: '' })
@@ -120,10 +270,28 @@ export function ShareRoom() {
   const [recording, setRecording] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [showNotifyPrompt, setShowNotifyPrompt] = useState(false)
+  const [showMoreScreens, setShowMoreScreens] = useState(false)
+  const [demoScreens, setDemoScreens] = useState<string[]>([])
+  const [screenMuted, setScreenMuted] = useState<Record<string, boolean>>({})
+  const [watchScreen, setWatchScreen] = useState<Tile | null>(null)
+  const [kickNotice, setKickNotice] = useState(false)
+  const [pendingDeleteMe, setPendingDeleteMe] = useState<string | null>(null)
+  const [showClearChats, setShowClearChats] = useState(false)
+  const [pendingClearChannel, setPendingClearChannel] = useState<ChannelId | null>(null)
   const [adminOn, setAdminOn] = useState(false)
 
+  // ----- conta (login com Google) -----
+  const [authUser, setAuthUser] = useState<{ id: string; email: string } | null>(null)
+  const authUserRef = useRef<{ id: string; email: string } | null>(null)
+  const setAuth = useCallback((u: { id: string; email: string } | null) => {
+    authUserRef.current = u
+    setAuthUser(u)
+  }, [])
+
   // Categoria ativa no mobile (barra inferior). Desktop não usa.
-  const [mobileTab, setMobileTab] = useState<'salas' | 'chamadas' | 'chat' | 'config'>('salas')
+  const [mobileTab, setMobileTab] = useState<'inicio' | 'chamadas' | 'chat' | 'config'>('inicio')
+  const [inicioView, setInicioView] = useState<'home' | 'publicas' | 'privadas' | 'criar' | 'minhas'>('home')
   // Sub-tela do painel de Configurações no mobile (cada categoria abre a sua).
   const [configPane, setConfigPane] = useState<
     | 'menu'
@@ -191,6 +359,85 @@ export function ShareRoom() {
     return () => el.classList.remove('theme-light')
   }, [settings.theme])
 
+  // Na primeira visita, pergunta se o usuário quer ativar as notificações
+  // (só pede uma vez; a escolha fica guardada).
+  useEffect(() => {
+    let asked = false
+    try {
+      asked = localStorage.getItem(NOTIFY_ASKED_KEY) === '1'
+    } catch {
+      /* noop */
+    }
+    if (
+      !asked &&
+      !settings.notifications &&
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'default'
+    ) {
+      setShowNotifyPrompt(true)
+    }
+  }, [settings.notifications])
+
+  const acceptNotifyPrompt = useCallback(() => {
+    try {
+      localStorage.setItem(NOTIFY_ASKED_KEY, '1')
+    } catch {
+      /* noop */
+    }
+    setShowNotifyPrompt(false)
+    setSetting('notifications', true)
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      void Notification.requestPermission()
+    }
+  }, [setSetting])
+
+  const dismissNotifyPrompt = useCallback(() => {
+    try {
+      localStorage.setItem(NOTIFY_ASKED_KEY, '1')
+    } catch {
+      /* noop */
+    }
+    setShowNotifyPrompt(false)
+  }, [])
+
+  // ----- Detecção de voz (anel verde quando alguém está falando) -----
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const analysersRef = useRef<Map<string, AnalyserNode>>(new Map())
+  const speakersRef = useRef<Record<string, boolean>>({})
+  const [speakers, setSpeakers] = useState<Record<string, boolean>>({})
+
+  const ensureAudioCtx = useCallback(() => {
+    if (!audioCtxRef.current) {
+      const Ctor =
+        typeof window !== 'undefined'
+          ? window.AudioContext ||
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+          : undefined
+      if (Ctor) audioCtxRef.current = new Ctor()
+    }
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      void audioCtxRef.current.resume()
+    }
+    return audioCtxRef.current
+  }, [])
+
+  // Retoma o contexto de áudio no primeiro toque/clique (exigência do navegador).
+  useEffect(() => {
+    const resume = () => ensureAudioCtx()
+    window.addEventListener('pointerdown', resume)
+    window.addEventListener('touchstart', resume)
+    return () => {
+      window.removeEventListener('pointerdown', resume)
+      window.removeEventListener('touchstart', resume)
+    }
+  }, [ensureAudioCtx])
+
+  // Traduz um texto para o idioma ativo (pt/en).
+  const t = useCallback(
+    (k: keyof typeof STRINGS) => STRINGS[k][settings.language === 'en' ? 1 : 0],
+    [settings.language]
+  )
+
   const turnAdminOn = useCallback((pwd: string) => {
     if (pwd !== '9921174') {
       toast.error('Senha incorreta')
@@ -241,6 +488,8 @@ export function ShareRoom() {
   const bind = useCallback((el: HTMLMediaElement | null, stream: MediaStream | null) => {
     if (!el || !stream) return
     if (el.srcObject !== stream) el.srcObject = stream
+    // Guarda o elemento para aplicar mudanças de volume em tempo real.
+    mediaElsRef.current.add(el)
     // Volume global do usuário (ajustado em Configurações → Áudio e vídeo).
     if (typeof el.volume === 'number') {
       el.volume = Math.max(0, Math.min(1, volumeRef.current))
@@ -250,6 +499,18 @@ export function ShareRoom() {
   // Ref para o volume, para que os elementos apliquem sempre o valor atual.
   const volumeRef = useRef<number>(1)
   volumeRef.current = settings.volume
+
+  // Guarda os elementos de mídia (áudio/vídeo) já em reprodução, para que a
+  // mudança de volume em Configurações valha na hora, sem precisar reconectar.
+  const mediaElsRef = useRef<Set<HTMLMediaElement>>(new Set())
+
+  // Aplica o volume atual em todos os participantes já tocando.
+  useEffect(() => {
+    const v = Math.max(0, Math.min(1, settings.volume))
+    mediaElsRef.current.forEach((el) => {
+      if (typeof el.volume === 'number') el.volume = v
+    })
+  }, [settings.volume])
 
   // Avisa os demais quais trilhas de vídeo são compartilhamento de tela.
   const broadcastScreenKind = useCallback((trackIds: string[]) => {
@@ -262,6 +523,8 @@ export function ShareRoom() {
 
   // Referência ao elemento de cada tile para a função de tela cheia real.
   const tileElsRef = useRef<Record<string, HTMLDivElement | null>>({})
+  // Ordem de ativação dos compartilhamentos de tela (quem começou primeiro).
+  const screenOrderRef = useRef<string[]>([])
 
   const toggleTileFullscreen = useCallback((id: string) => {
     const el = tileElsRef.current[id]
@@ -302,7 +565,13 @@ export function ShareRoom() {
       ...(screenStreamRef.current?.getVideoTracks() ?? []),
     ]
     const constraints = QUALITY_CONSTRAINTS[q]
-    tracks.forEach((t) => void t.applyConstraints(constraints).catch(() => undefined))
+    const bitrate = QUALITY_BITRATES[q]
+    const engine = engineRef.current
+    tracks.forEach((t) => {
+      if (t.readyState !== 'live') return
+      void t.applyConstraints(constraints).catch(() => undefined)
+      if (bitrate > 0) void engine?.setTrackBitrate(t, bitrate)
+    })
   }, [])
 
   const setQualityAndApply = useCallback(
@@ -314,7 +583,7 @@ export function ShareRoom() {
   )
 
   const reacquire = useCallback(
-    async (withVideo: boolean) => {
+    async (withVideo: boolean, keepMicMuted = false) => {
       if (!inCallRef.current) return
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -325,8 +594,10 @@ export function ShareRoom() {
           },
           video: withVideo,
         })
+        // Se o microfone estava mudo, mantém mudo ao ativar câmera/tela.
+        stream.getAudioTracks().forEach((t) => (t.enabled = !keepMicMuted))
         replaceLocalStream(stream)
-        setMicOn(true)
+        setMicOn(!keepMicMuted)
         applyQualityToStreams(settings.defaultQuality)
       } catch {
         toast.error('Não foi possível acessar microfone/câmera')
@@ -334,6 +605,14 @@ export function ShareRoom() {
     },
     [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.defaultQuality, applyQualityToStreams]
   )
+
+  // Quando o usuário liga/desliga o corte de ruído ou o eco, reaplica na hora
+  // na chamada atual (sem precisar sair e entrar de novo).
+  useEffect(() => {
+    if (!inCallRef.current) return
+    void reacquire(camOn, !micOn)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.noiseSuppression, settings.echoCancellation])
 
   // ----- engine + polling -----
   useEffect(() => {
@@ -433,8 +712,8 @@ export function ShareRoom() {
         // Notificação (se ativada nas Configurações) quando alguém entra na sala.
         if (settings.notifications && peerId !== clientIdRef.current && document.hidden) {
           try {
-            new Notification(`${msg.member.name} entrou em ${channelLabel(channelRef.current)}`, {
-              body: 'Um participante entrou na chamada.',
+            new Notification(`${msg.member.name} ${t('notifyJoined')} ${channelLabel(channelRef.current)}`, {
+              body: t('notifyBodyJoined'),
             })
           } catch {
             /* noop */
@@ -442,6 +721,17 @@ export function ShareRoom() {
         }
       } else if (msg.type === 'peer-left') {
         engine.removePeer(msg.clientId)
+        // Notificação quando alguém sai da sala.
+        if (settings.notifications && msg.clientId !== clientIdRef.current && document.hidden) {
+          const name = remotePeersRef.current[msg.clientId]?.name ?? t('noName')
+          try {
+            new Notification(`${name} ${t('notifyLeft')} ${channelLabel(channelRef.current)}`, {
+              body: t('notifyBodyLeft'),
+            })
+          } catch {
+            /* noop */
+          }
+        }
       } else if (msg.type === 'peer-updated') {
         const peerId = msg.member.clientId
         if (remotePeersRef.current[peerId]) {
@@ -458,8 +748,17 @@ export function ShareRoom() {
         setChat((prev) => [...prev, msg.message])
       } else if (msg.type === 'chat-deleted') {
         setChat((prev) => prev.filter((m) => m.id !== msg.messageId))
+      } else if (msg.type === 'chat-cleared') {
+        // Todas as mensagens deste chat foram apagadas (limpeza).
+        if (msg.channel === channelRef.current) {
+          seenChatRef.current = new Set()
+          setChat([])
+        }
       } else if (msg.type === 'admin-mute') {
         setMutedPeers((prev) => ({ ...prev, [msg.targetId]: msg.muted }))
+      } else if (msg.type === 'kicked') {
+        // Foi desconectado por ficar sozinho no canal por 5 minutos (AFK).
+        setKickNotice(true)
       } else if (msg.type === 'screen-kind') {
         screenTrackIdsRef.current = {
           ...screenTrackIdsRef.current,
@@ -513,6 +812,49 @@ export function ShareRoom() {
     }
   }, [sendSignalBody, settings.notifications])
 
+  // ----- conta: carrega o usuário logado e o perfil salvo no servidor -----
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/auth/me')
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return
+        const u = d?.user
+        if (!u) return
+        setAuth({ id: u.id, email: u.email })
+        // Puxa o perfil salvo (nome, bio, foto) da conta.
+        return fetch('/api/profile')
+          .then((r) => r.json())
+          .then((p) => {
+            if (cancelled || !p?.profile) return
+            const prof = p.profile as { name?: string; bio?: string | null; photo?: string | null }
+            const next: Profile = {
+              name: prof.name?.trim() || 'Anon',
+              photo: prof.photo ?? undefined,
+              bio: prof.bio ?? undefined,
+            }
+            profileRef.current = next
+            setProfile(next)
+            if (next.name) {
+              nameRef.current = next.name
+              setName(next.name)
+            }
+            try {
+              localStorage.setItem(PROFILE_KEY, JSON.stringify(next))
+            } catch {
+              /* ignore */
+            }
+          })
+      })
+      .catch(() => {
+        /* offline / sessão ausente — segue com perfil local */
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ----- join / leave channel + profile -----
   const joinChannel = useCallback(
     async (channelId: ChannelId) => {
@@ -528,6 +870,12 @@ export function ShareRoom() {
       setCamOn(false)
       setMicOn(false)
       setMutedPeers({})
+      // Garante que o compartilhamento de tela é totalmente desligado ao trocar de sala.
+      setScreenStreaming(false)
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((t) => t.stop())
+        screenStreamRef.current = null
+      }
 
       const res = await apiClient.post<{ channel: ChannelId; members: Member[] }>(
         '/api/rtc',
@@ -588,6 +936,13 @@ export function ShareRoom() {
     void apiClient.post('/api/rtc', { action: 'leave', clientId: clientIdRef.current })
   }, [replaceLocalStream])
 
+  // Quando o servidor desconecta o usuário (ficou sozinho 5min+), sai da sala.
+  useEffect(() => {
+    if (kickNotice && inCallRef.current) {
+      leaveChannel()
+    }
+  }, [kickNotice, leaveChannel])
+
   const toggleMic = useCallback(() => {
     const stream = localStreamRef.current
     if (!stream) {
@@ -602,8 +957,9 @@ export function ShareRoom() {
   const toggleCam = useCallback(() => {
     const next = !camOn
     setCamOn(next)
-    void reacquire(next)
-  }, [camOn, reacquire])
+    // Não desmuta o microfone se ele já estava mudo.
+    void reacquire(next, !micOn)
+  }, [camOn, micOn, reacquire])
 
   const toggleScreen = useCallback(async () => {
     const engine = engineRef.current
@@ -616,7 +972,11 @@ export function ShareRoom() {
       return
     }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+      const videoConstraints = quality === 'auto' ? true : QUALITY_CONSTRAINTS[quality]
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: videoConstraints,
+        audio: screenWithAudio,
+      })
       screenStreamRef.current = stream
       engine?.addLocalStream(stream)
       setScreenStreaming(true)
@@ -631,7 +991,7 @@ export function ShareRoom() {
     } catch {
       toast.error('Compartilhamento de tela cancelado')
     }
-  }, [applyQualityToStreams, quality, broadcastScreenKind])
+  }, [applyQualityToStreams, quality, broadcastScreenKind, screenWithAudio])
 
   const sendChat = useCallback(() => {
     const text = draft.trim()
@@ -653,6 +1013,22 @@ export function ShareRoom() {
   // "Apagar para mim": remove apenas localmente (não avisa os outros).
   const deleteForMe = useCallback((messageId: string) => {
     setChat((prev) => prev.filter((m) => m.id !== messageId))
+  }, [])
+
+  const clearChatChannel = useCallback(async (channelId: ChannelId) => {
+    const res = await apiClient.post<{ cleared: number }>('/api/rtc', {
+      action: 'chat-clear',
+      channel: channelId,
+    })
+    if (res.success) {
+      if (channelId === channelRef.current) {
+        seenChatRef.current = new Set()
+        setChat([])
+      }
+      toast.success(t('chatClearedOk'))
+    } else {
+      toast.error('Não foi possível apagar as conversas')
+    }
   }, [])
 
   // ----- voice recording -----
@@ -732,10 +1108,27 @@ export function ShareRoom() {
   }, [channel, inCall])
 
   // ----- profile actions -----
+  // Envia o perfil para a conta quando o usuário está logado.
+  const persistProfileToServer = useCallback((next: Profile) => {
+    if (!authUserRef.current) return
+    void fetch('/api/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: next.name, bio: next.bio, photo: next.photo }),
+    }).catch(() => {})
+  }, [])
+
+  const handleLogout = useCallback(async () => {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    setAuth(null)
+    window.location.reload()
+  }, [setAuth])
+
   const saveProfile = useCallback(async (next: Profile) => {
     profileRef.current = next
     setProfile(next)
     localStorage.setItem(PROFILE_KEY, JSON.stringify(next))
+    persistProfileToServer(next)
     setEditProfileOpen(false)
     if (next.name) nameRef.current = next.name
     if (!inCallRef.current) return
@@ -751,7 +1144,7 @@ export function ShareRoom() {
       }
     )
     if (!res.success) toast.error(res.error)
-  }, [])
+  }, [persistProfileToServer])
 
   const resetMyName = useCallback(() => {
     const next = (window.prompt('Qual nome você quer usar?') || '').trim()
@@ -762,6 +1155,7 @@ export function ShareRoom() {
       bio: profileRef.current.bio,
     }
     localStorage.setItem(PROFILE_KEY, JSON.stringify(saved))
+    persistProfileToServer(saved)
     nameRef.current = next
     profileRef.current = saved
     setName(next)
@@ -777,7 +1171,7 @@ export function ShareRoom() {
         channel: channelRef.current,
       })
     }
-  }, [])
+  }, [persistProfileToServer])
 
   // ----- gerenciar usuários offline (fantasmas) -----
   const removeAllOffline = useCallback(async () => {
@@ -869,28 +1263,74 @@ export function ShareRoom() {
         })
       })
     }
+    // Telas simuladas (somente no modo administrador).
+    if (isAdmin) {
+      for (const demoTile of demoScreens) {
+        tiles.push({
+          id: `demo-screen-${demoTile}`,
+          name: `${demoTile} · simulação`,
+          stream: null,
+          hasVideo: false,
+          isLocal: false,
+          peerId: null,
+          muted: false,
+          isScreen: true,
+          simulated: true,
+        })
+      }
+    }
   }
 
-  const renderTile = (tile: Tile) => (
-    <div
-      key={tile.id}
+  // Ordena as telas compartilhadas por ordem de ativação (quem começou primeiro).
+  const allScreenTiles = tiles.filter((t) => t.isScreen)
+  screenOrderRef.current = allScreenTiles
+    .map((t) => t.id)
+    .filter((id) => screenOrderRef.current.includes(id))
+    .concat(allScreenTiles.map((t) => t.id).filter((id) => !screenOrderRef.current.includes(id)))
+  const screenTiles = [...allScreenTiles].sort(
+    (a, b) => screenOrderRef.current.indexOf(a.id) - screenOrderRef.current.indexOf(b.id)
+  )
+  const normalTiles = tiles.filter((t) => !t.isScreen)
+  const primaryScreen = screenTiles[0]
+  const secondaryScreen = screenTiles[1]
+  const extraScreens = screenTiles.slice(2)
+
+  const renderTile = (tile: Tile) => {
+    // Placeholder para telas simuladas (modo de teste).
+    if (tile.simulated) {
+      return (
+        <div
+          key={tile.id}
+          className="flex aspect-video w-[320px] max-w-[90%] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-indigo-400/40 bg-gradient-to-br from-indigo-950/60 to-slate-900/60 p-3 text-center"
+        >
+          <div className="text-3xl">🖥️</div>
+          <span className="text-sm font-semibold text-indigo-200">{tile.name}</span>
+          <span className="rounded-md bg-indigo-500/20 px-2 py-0.5 text-[10px] font-medium text-indigo-300">{t('screenSimLabel')}</span>
+        </div>
+      )
+    }
+    return (
+      <div
+        key={tile.id}
       onContextMenu={tile.isLocal ? undefined : (e) => e.preventDefault()}
       ref={(el) => {
         tileElsRef.current[tile.id] = el
       }}
-      className={`relative overflow-hidden rounded-xl border border-white/10 ${
+      className={`relative overflow-hidden rounded-xl ${
+        tile.hasVideo ? 'border border-white/10 bg-black/60' : 'bg-transparent'
+      } ${
         tile.isScreen
           ? 'aspect-video w-[420px] max-w-full sm:w-[520px] lg:w-[720px]'
           : tile.hasVideo
             ? 'aspect-video w-[300px] max-w-[80%] sm:w-[340px] lg:w-[400px]'
-            : 'aspect-square w-24'
-      } ${tile.hasVideo ? 'bg-black/60' : 'bg-slate-900/40'}`}
+            : 'aspect-square w-24 sm:w-28'
+      }`}
     >
       {tile.hasVideo ? (
         <video
           autoPlay
           playsInline
-          muted={tile.isLocal || tile.muted}
+          muted={tile.isLocal || tile.muted || !!screenMuted[tile.id]}
           className="h-full w-full object-cover"
           ref={(el) => bind(el, tile.stream)}
         />
@@ -906,19 +1346,33 @@ export function ShareRoom() {
               ref={(el) => bind(el, tile.stream)}
             />
           )}
-          <div className="flex h-full w-full items-center justify-center p-4">
-            <div className="flex aspect-square w-16 flex-col items-center justify-center gap-1 rounded-xl bg-slate-900/80 p-1.5 ring-1 ring-white/10">
-              <Avatar name={tile.name} photo={tile.photo} size={30} />
-              <span className="max-w-full truncate text-[9px] text-slate-300">
-                {tile.name}
-              </span>
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1 p-1">
+            <div className="relative">
+              <div
+                className={`flex aspect-square w-16 items-center justify-center rounded-full ring-2 transition-colors ${
+                  speakers[tile.id] ? 'ring-emerald-400' : 'ring-slate-600/50'
+                }`}
+              >
+                <div className="flex aspect-square w-16 items-center justify-center overflow-hidden rounded-full bg-white/10">
+                  <Avatar name={tile.name} photo={tile.photo} size={48} />
+                </div>
+              </div>
+              {speakers[tile.id] && (
+                <span className="absolute inset-0 animate-pulse rounded-full ring-2 ring-emerald-400" />
+              )}
+              {(tile.isLocal ? !micOn : tile.muted) && (
+                <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-red-500/90 text-xs text-white">🔇</span>
+              )}
             </div>
-          </div>
-          {!tile.isLocal && !tile.muted && (
-            <span className="absolute bottom-2 left-2 flex items-center gap-1 text-[10px] text-emerald-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ao vivo
+            <span className="max-w-full truncate px-1 text-[11px] font-medium text-slate-100">
+              {tile.name}
             </span>
-          )}
+            {!(tile.isLocal ? !micOn : tile.muted) && (
+              <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ao vivo
+              </span>
+            )}
+          </div>
         </>
       )}
 
@@ -932,6 +1386,19 @@ export function ShareRoom() {
       {/* controles do tile (somente vídeo) */}
       {tile.hasVideo && (
         <div className="absolute right-2 top-2 flex gap-1.5">
+          {tile.isScreen && !tile.isLocal && (
+            <button
+              title={screenMuted[tile.id] ? t('screenUnmute') : t('screenMute')}
+              onClick={() => setScreenMuted((prev) => ({ ...prev, [tile.id]: !(prev[tile.id] ?? false) }))}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm backdrop-blur transition ${
+                screenMuted[tile.id]
+                  ? 'bg-red-500/80 hover:bg-red-500'
+                  : 'bg-black/50 hover:bg-black/70'
+              }`}
+            >
+              {screenMuted[tile.id] ? '🔇' : '🔊'}
+            </button>
+          )}
           <button
             title="Tela cheia (todo o computador / celular)"
             onClick={() => toggleTileFullscreen(tile.id)}
@@ -966,38 +1433,136 @@ export function ShareRoom() {
         </button>
       )}
     </div>
-  )
+    )
+  }
+
+  // Conecta um analisador para cada trilha de áudio ativa dos participantes.
+  useEffect(() => {
+    const seen = new Set<string>()
+    const ctx = ensureAudioCtx()
+    tiles.forEach((tile) => {
+      if (!tile.stream || tile.stream.getAudioTracks().length === 0) return
+      seen.add(tile.stream.id)
+      if (analysersRef.current.has(tile.stream.id) || !ctx) return
+      try {
+        const source = ctx.createMediaStreamSource(tile.stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        analyser.smoothingTimeConstant = 0.3
+        source.connect(analyser)
+        analysersRef.current.set(tile.stream.id, analyser)
+      } catch {
+        /* noop */
+      }
+    })
+    for (const id of analysersRef.current.keys()) {
+      if (!seen.has(id)) {
+        analysersRef.current.get(id)?.disconnect()
+        analysersRef.current.delete(id)
+      }
+    }
+  }, [tiles, ensureAudioCtx])
+
+  // Verifica periodicamente o nível de áudio para acender o anel verde.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const next = { ...speakersRef.current }
+      let changed = false
+      tiles.forEach((tile) => {
+        const muted = tile.isLocal ? !micOn : tile.muted
+        if (muted || !tile.stream) {
+          if (next[tile.id]) {
+            delete next[tile.id]
+            changed = true
+          }
+          return
+        }
+        const analyser = analysersRef.current.get(tile.stream.id)
+        if (!analyser) return
+        const buf = new Uint8Array(analyser.fftSize)
+        analyser.getByteTimeDomainData(buf)
+        let sum = 0
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128
+          sum += v * v
+        }
+        const rms = Math.sqrt(sum / buf.length)
+        const speaking = rms > 0.015
+        if (!!next[tile.id] !== speaking) {
+          next[tile.id] = speaking
+          changed = true
+        }
+      })
+      if (changed) {
+        speakersRef.current = next
+        setSpeakers(next)
+      }
+    }, 140)
+    return () => window.clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tiles, micOn, mutedPeers])
 
   const renderMain = () => {
     if (!inCall) {
       return (
         <div className="flex flex-1 flex-col items-center justify-center text-center">
           <div className="text-5xl">🎧</div>
-          <h2 className="mt-4 text-xl font-bold">Escolha um canal de voz</h2>
-          <p className="mt-2 max-w-md text-sm text-slate-400">
-            Vá até a aba <span className="font-semibold text-indigo-300">Salas</span> e toque num
-            canal para entrar na chamada.
-          </p>
+          <h2 className="mt-4 text-xl font-bold">{t('chooseChannel')}</h2>
+          <p className="mt-2 max-w-md text-sm text-slate-400">{t('chooseHintFull')}</p>
           <button
-            onClick={() => setMobileTab('salas')}
-            className="mt-4 rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 md:hidden"
+            onClick={() => setMobileTab('inicio')}
+            className="mt-4 rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 lg:hidden"
           >
-            Ver salas
+            {t('seeRooms')}
           </button>
         </div>
       )
     }
-    const screenTiles = tiles.filter((t) => t.isScreen)
-    const normalTiles = tiles.filter((t) => !t.isScreen)
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto py-2">
-        {screenTiles.length > 0 && (
-          <div className="mt-auto flex items-center justify-center">
-            {screenTiles.map((tile) => renderTile(tile))}
+        {/* Modo de teste com telas simuladas (somente admin) */}
+        {isAdmin && demoScreens.length > 0 && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-indigo-400/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+            <span>{t('demoBanner')} ({demoScreens.length})</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDemoScreens((d) => [...d, `Usuário ${d.length + 3}`])}
+                className="rounded-md bg-indigo-500/20 px-2 py-1 font-semibold hover:bg-indigo-500/30"
+              >
+                + {t('addDemoScreen')}
+              </button>
+              <button
+                onClick={() => setDemoScreens([])}
+                className="rounded-md bg-white/10 px-2 py-1 font-semibold hover:bg-white/20"
+              >
+                {t('clearDemo')}
+              </button>
+            </div>
           </div>
         )}
+        {/* 1ª tela compartilhada: fica no topo */}
+        {primaryScreen && <div className="flex items-center justify-center">{renderTile(primaryScreen)}</div>}
+        {/* 2ª tela: fica no meio + botão "ver mais" a partir da 3ª */}
+        {secondaryScreen && (
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {renderTile(secondaryScreen)}
+            {extraScreens.length > 0 && (
+              <button
+                onClick={() => setShowMoreScreens(true)}
+                className="flex h-24 w-44 flex-col items-center justify-center gap-1.5 rounded-2xl border border-indigo-400/30 bg-gradient-to-br from-indigo-500/20 to-fuchsia-500/10 text-indigo-100 shadow-lg shadow-indigo-500/10 transition hover:scale-[1.03] hover:from-indigo-500/30 hover:to-fuchsia-500/20"
+              >
+                <span className="text-2xl">🎬</span>
+                <span className="text-[12px] font-bold">{t('seeMoreScreens')}</span>
+                <span className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">
+                  {extraScreens.length} {t('screenShort')}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+        {/* participantes / avatares */}
         {normalTiles.length > 0 && (
-          <div className="flex min-h-0 flex-wrap content-center items-center justify-center gap-3">
+          <div className="flex min-h-0 flex-wrap content-start items-start justify-start gap-3">
             {normalTiles.map((tile) => renderTile(tile))}
           </div>
         )}
@@ -1007,7 +1572,7 @@ export function ShareRoom() {
 
   return (
     <div
-      className={`theme-${settings.theme} flex min-h-dvh flex-col gap-3 p-3 pb-24 md:h-screen md:grid md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] md:grid-rows-[minmax(0,auto)_minmax(0,1fr)] md:overflow-hidden md:pb-3`}
+      className={`theme-${settings.theme} flex h-dvh flex-col gap-3 overflow-hidden p-3 pb-24 lg:h-screen lg:grid lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[minmax(0,auto)_minmax(0,1fr)] lg:overflow-hidden lg:pb-3`}
       onClick={() => {
         setViewProfile(null)
         setProfileMenuMsg(null)
@@ -1017,15 +1582,21 @@ export function ShareRoom() {
 
       {/* Sidebar */}
       <aside
-        className={`share-panel flex min-h-0 flex-1 flex-col rounded-2xl p-3 md:col-start-1 md:row-start-1 md:overflow-y-auto ${
-          mobileTab === 'salas' ? 'flex' : 'hidden'
-        } md:flex`}
+        className={`share-panel flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl p-3 lg:col-start-1 lg:row-start-1 ${
+          mobileTab === 'inicio' ? 'flex' : 'hidden'
+        } lg:flex`}
       >
-        <div className="flex items-center gap-2">
-          <span className="text-xl font-extrabold tracking-tight">ShareRoom</span>
-          <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">voz</span>
+        <div className="flex flex-col items-center px-1 pt-1 text-center">
+          <img
+            src="/logo.png"
+            alt="Orbit Room"
+            className="h-20 w-20 flex-none object-contain drop-shadow-2xl"
+          />
+          <h1 className="font-brand mt-2.5 bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-3xl font-bold uppercase tracking-[0.1em] text-transparent">
+            Orbit Room
+          </h1>
+          <span className="mt-1.5 rounded-full bg-emerald-500/15 px-3 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-400/20">{t('voice')}</span>
         </div>
-        <p className="mt-1 text-xs text-slate-400">Canais de voz para conversar</p>
 
         {/* Mini perfil compacto + botão editar */}
         <div className="share-panel-soft mt-4 flex items-center gap-2 rounded-lg px-2 py-1.5">
@@ -1046,180 +1617,150 @@ export function ShareRoom() {
             title="Configurações"
             onClick={() => setSettingsOpen((o) => !o)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSettingsOpen((o) => !o) }}
-            className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition ${
+            className={`relative hidden h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition lg:flex ${
               settingsOpen ? 'bg-white/20' : 'hover:bg-white/20'
             }`}
           >
             🛠️
           </div>
-        </div>
-
-        <h3 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-          Canais de voz
-        </h3>
-        <div className="mt-2 space-y-1.5 overflow-auto">
-          {DEFAULT_CHANNELS.map((c) => {
-            const active = inCall && channel === c.id
-            const count = onlineMembers.filter(
-              (m) => m.channel === c.id && m.clientId !== clientId
-            ).length
-            return (
-              <button
-                key={c.id}
-                onClick={() => void joinChannel(c.id)}
-                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-                  active
-                    ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40'
-                    : 'text-slate-300 hover:bg-white/5'
-                }`}
-              >
-                <span className="text-base">{active ? '🔊' : '🔈'}</span>
-                <span className="flex-1 truncate">{c.label}</span>
-                <span className="text-[10px] text-slate-400">{count} online</span>
-              </button>
-            )
-          })}
-        </div>
-
-        <div className="mt-3">
-          <button
-            onClick={leaveChannel}
-            disabled={!inCall}
-            className="w-full rounded-lg bg-red-500/90 px-3 py-2 text-sm font-semibold text-white transition enabled:hover:bg-red-500 disabled:opacity-40"
-          >
-            Sair do canal
-          </button>
-        </div>
-
-        <h3 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-          Online ({onlineMembers.length})
-        </h3>
-        <div className="mt-2 space-y-1 overflow-auto">
-          {onlineMembers.map((m) => (
-            <div
-              key={m.clientId}
-              className="group flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5"
+          {authUser ? (
+            <button
+              type="button"
+              title="Sair da conta"
+              onClick={() => void handleLogout()}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs transition hover:bg-rose-500/30"
             >
-              <Avatar name={m.name} photo={m.photo} size={26} />
-              <span className="min-w-0 flex-1 truncate">{m.name}</span>
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full ${
-                  m.channel === channel ? 'bg-emerald-400' : 'bg-slate-500'
-                }`}
-              />
-              <button
-                title="Ver perfil"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setViewProfile({ name: m.name, photo: m.photo, bio: m.bio })
-                }}
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 opacity-0 transition group-hover:opacity-100 hover:bg-white/5 hover:text-slate-200"
-              >
-                ⋯
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Limpeza de perfis fantasma / offline */}
-        <div className="mt-3 space-y-2">
-          <button
-            onClick={() => resetMyName()}
-            title="Escolhe de novo o seu nome, sem precisar abrir o perfil"
-            className="w-full rounded-lg bg-emerald-500/20 px-3 py-2 text-left text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
-          >
-            ✏️ Trocar meu nome
-          </button>
-          <button
-            onClick={() => void removeAllOffline()}
-            disabled={offlineMembers.length === 0}
-            title="Apaga usuários offline (fantasmas) para liberar os nomes e poder usá-los de novo"
-            className="w-full rounded-lg bg-indigo-500/20 px-3 py-2 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition enabled:hover:bg-indigo-500/30 disabled:opacity-40 disabled:ring-transparent"
-          >
-            🔄 Resetar nomes dos perfis
-          </button>
-          {offlineMembers.length > 0 && (
-            <div className="share-panel-soft rounded-lg p-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">
-                  Offline ({offlineMembers.length})
-                </span>
-                <button
-                  onClick={() => void removeAllOffline()}
-                  className="rounded-md bg-red-500/20 px-2 py-1 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/30"
-                >
-                  🗑 Excluir todas
-                </button>
-              </div>
-              <p className="mt-1 text-[10px] text-slate-500">
-                Inativo há mais de 15 min · apague o registro para liberar o nome.
-              </p>
-              <ul className="mt-1.5 space-y-1">
-                {offlineMembers.map((m) => (
-                  <li key={m.clientId} className="flex items-center gap-2 text-xs text-slate-400">
-                    <Avatar name={m.name} photo={m.photo} size={20} />
-                    <span className="min-w-0 flex-1 truncate">{m.name}</span>
-                    {typeof m.lastSeen === 'number' && (
-                      <span
-                        translate="no"
-                        title="Há quanto tempo saiu"
-                        className="shrink-0 text-[10px] tabular-nums text-slate-500"
-                      >
-                        {formatAgo(m.lastSeen)}
-                      </span>
-                    )}
-                    <button
-                      title="Ver perfil"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setViewProfile({ name: m.name, photo: m.photo, bio: m.bio })
-                      }}
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-slate-200"
-                    >
-                      ⋯
-                    </button>
-                    <button
-                      title="Apagar registro offline"
-                      onClick={() => void removeOfflineMember(m.clientId)}
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-red-300"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
+              ⎋
+            </button>
+          ) : (
+            <a
+              href="/login"
+              title="Entrar para salvar seu perfil"
+              className="flex h-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-r from-indigo-500/40 to-fuchsia-500/40 px-2 text-[11px] font-semibold text-indigo-100 ring-1 ring-indigo-400/30 transition hover:from-indigo-500/60 hover:to-fuchsia-500/60"
+            >
+              Entrar
+            </a>
           )}
         </div>
+
+        {/* Início: grade de categorias */}
+        {inicioView === 'home' ? (
+          <div className="mt-6 grid flex-1 grid-cols-2 content-start gap-3">
+            <button
+              onClick={() => setInicioView('publicas')}
+              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/15 ring-1 ring-indigo-400/20 transition hover:scale-[1.03] hover:from-indigo-500/40 hover:to-fuchsia-500/25"
+            >
+              <span className="text-3xl drop-shadow">🌐</span>
+              <span className="px-2 text-center text-sm font-bold leading-tight">{t('publicRooms')}</span>
+              <span className="px-3 text-center text-[10px] text-indigo-200/70">{t('publicRoomsDesc')}</span>
+            </button>
+            <button
+              onClick={() => setInicioView('privadas')}
+              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-amber-500/25 to-orange-500/10 ring-1 ring-amber-400/20 transition hover:scale-[1.03] hover:from-amber-500/35 hover:to-orange-500/20"
+            >
+              <span className="text-3xl drop-shadow">🔒</span>
+              <span className="px-2 text-center text-sm font-bold leading-tight">{t('privateRooms')}</span>
+              <span className="px-3 text-center text-[10px] text-amber-200/70">{t('privateRoomsDesc')}</span>
+            </button>
+            <button
+              onClick={() => setInicioView('criar')}
+              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-emerald-500/25 to-teal-500/10 ring-1 ring-emerald-400/20 transition hover:scale-[1.03] hover:from-emerald-500/35 hover:to-teal-500/20"
+            >
+              <span className="text-3xl drop-shadow">➕</span>
+              <span className="px-2 text-center text-sm font-bold leading-tight">{t('createRoom')}</span>
+              <span className="px-3 text-center text-[10px] text-emerald-200/70">{t('createRoomDesc')}</span>
+            </button>
+            <button
+              onClick={() => setInicioView('minhas')}
+              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-sky-500/25 to-cyan-500/10 ring-1 ring-sky-400/20 transition hover:scale-[1.03] hover:from-sky-500/35 hover:to-cyan-500/20"
+            >
+              <span className="text-3xl drop-shadow">📁</span>
+              <span className="px-2 text-center text-sm font-bold leading-tight">{t('myRooms')}</span>
+              <span className="px-3 text-center text-[10px] text-sky-200/70">{t('myRoomsDesc')}</span>
+            </button>
+          </div>
+        ) : (
+          <div className="mt-3 flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setInicioView('home')}
+                className="flex h-8 items-center gap-1 rounded-lg bg-white/10 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/15"
+              >
+                ← {t('back')}
+              </button>
+              <h3 className="text-sm font-bold">
+                {({
+                  publicas: t('publicRooms'),
+                  privadas: t('privateRooms'),
+                  criar: t('createRoom'),
+                  minhas: t('myRooms'),
+                } as Record<string, string>)[inicioView]}
+              </h3>
+            </div>
+            {inicioView === 'publicas' ? (
+              <div className="mt-3 flex min-h-0 flex-1 flex-col">
+                <p className="mb-2 text-center text-xs font-medium text-slate-400">{t('subtitle')}</p>
+                <div className="space-y-1.5 overflow-y-auto">
+                {DEFAULT_CHANNELS.map((c) => {
+                  const active = inCall && channel === c.id
+                  const count = onlineMembers.filter(
+                    (m) => m.channel === c.id && m.clientId !== clientId
+                  ).length
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => void joinChannel(c.id)}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                        active
+                          ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40'
+                          : 'text-slate-300 hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="text-base">{active ? '🔊' : '🔈'}</span>
+                      <span className="flex-1 truncate">{c.label}</span>
+                      <span className="text-[10px] text-slate-400">{count} online</span>
+                    </button>
+                  )
+                })}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center text-center">
+                <span className="text-4xl">🚧</span>
+                <p className="mt-3 text-sm text-slate-400">{t('comingSoon')}</p>
+              </div>
+            )}
+          </div>
+        )}
       </aside>
 
       {/* Palco de vídeo */}
       <main
-        className={`share-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-3 md:col-start-2 md:row-span-2 md:row-start-1 md:min-h-0 lg:min-h-0 ${
+        className={`share-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-3 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0 ${
           mobileTab === 'chamadas' ? 'flex' : 'hidden'
-        } md:flex`}
+        } lg:flex`}
       >
         {renderMain()}
 
         {/* Configurações (Tema + Administrador) no canto superior direito */}
         {settingsOpen && (
-          <div className="share-panel absolute right-3 top-3 z-30 flex w-64 flex-col rounded-xl p-1 shadow-2xl">
+          <div className="share-panel absolute right-3 top-3 z-30 hidden w-64 flex-col rounded-xl p-1 shadow-2xl lg:flex">
             <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-              <span className="text-sm font-bold">Configurações</span>
+              <span className="text-sm font-bold">{t('configTitle')}</span>
               <button
                 onClick={() => setSettingsOpen(false)}
-                title="Fechar"
+                title={t('close')}
                 className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-xs transition hover:bg-white/20"
               >
                 ✕
               </button>
             </div>
             <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-              <span className="text-sm font-medium">Tema</span>
+              <span className="text-sm font-medium">{settings.theme === 'light' ? t('lightTheme') : t('darkTheme')}</span>
               <button
                 role="switch"
                 aria-checked={settings.theme === 'light'}
-                title={settings.theme === 'light' ? 'Mudar para tema escuro' : 'Mudar para tema claro'}
+                title={settings.theme === 'light' ? t('darkTheme') : t('lightTheme')}
                 onClick={() => setSetting('theme', settings.theme === 'light' ? 'dark' : 'light')}
                 className={`relative h-5 w-9 rounded-full transition ${
                   settings.theme === 'light' ? 'bg-amber-400' : 'bg-slate-600'
@@ -1233,7 +1774,7 @@ export function ShareRoom() {
               </button>
             </div>
             <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
-              <span className="text-sm font-medium">Administrador</span>
+              <span className="text-sm font-medium">{t('admin')}</span>
               {!adminOn ? (
                 <form
                   onSubmit={(e) => {
@@ -1246,7 +1787,7 @@ export function ShareRoom() {
                   <input
                     name="adminPwd"
                     type="password"
-                    placeholder="Senha"
+                    placeholder={t('password')}
                     autoComplete="current-password"
                     className="h-6 w-24 rounded border border-white/20 bg-white/5 px-1 text-xs outline-none"
                   />
@@ -1278,63 +1819,160 @@ export function ShareRoom() {
         {/* Barra de controle (só quando estiver numa sala de voz) */}
         {inCall && (
           <>
-            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-          <button
-            onClick={toggleMic}
-            className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-              micOn
-                ? 'bg-white/10 text-white hover:bg-white/15'
-                : 'bg-red-500/90 text-white hover:bg-red-500'
-            }`}
-          >
-            {micOn ? '🎙️ Microfone' : '🔇 Mudo'}
-          </button>
-          <button
-            onClick={toggleCam}
-            className="rounded-lg bg-white/10 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
-          >
-            {camOn ? '📷 Câmera ligada' : '📷 Ligar câmera'}
-          </button>
-          <button
-            onClick={() => void toggleScreen()}
-            className="rounded-lg bg-white/10 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
-          >
-            {screenStreaming ? '🖥️ Parar tela' : '🖥️ Compartilhar tela'}
-          </button>
-          <select
-            value={quality}
-            onChange={(e) => setQualityAndApply(e.target.value as Quality)}
-            title="Qualidade do vídeo/tela"
-            className="h-9 rounded-lg border border-white/10 bg-slate-800/80 px-2 text-sm outline-none"
-          >
-            {QUALITY_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-        <p className="mt-1 text-center text-[10px] text-slate-500">
-          Qualidade atual:{QUALITY_OPTIONS.find((o) => o.id === quality)?.hint} · use Baixa p/ travar menos
-        </p>
+            <div className="mt-3 flex flex-col items-center gap-2">
+              {/* Fileira principal: ações essenciais em círculos */}
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={toggleMic}
+                  className="flex w-20 flex-none flex-col items-center gap-1.5"
+                  aria-label={micOn ? t('micOn') : t('muted')}
+                >
+                  <span
+                    className={`flex h-12 w-12 items-center justify-center rounded-full text-lg transition ${
+                      micOn
+                        ? 'bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/40'
+                        : 'bg-red-500 text-white shadow-lg shadow-red-500/30'
+                    }`}
+                  >
+                    {micOn ? '🎙️' : '🔇'}
+                  </span>
+                  <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{micOn ? t('micOn') : t('muted')}</span>
+                </button>
+
+                <button
+                  onClick={toggleCam}
+                  className="flex w-20 flex-none flex-col items-center gap-1.5"
+                  aria-label={camOn ? t('camOn') : t('camTurn')}
+                >
+                  <span
+                    className={`flex h-12 w-12 items-center justify-center rounded-full text-lg transition ${
+                      camOn
+                        ? 'bg-sky-500/15 text-sky-200 ring-1 ring-sky-400/40'
+                        : 'bg-white/10 text-white hover:bg-white/15'
+                    }`}
+                  >
+                    📷
+                  </span>
+                  <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{camOn ? t('camOn') : t('camTurn')}</span>
+                </button>
+
+                <button
+                  onClick={() => void toggleScreen()}
+                  className="flex w-20 flex-none flex-col items-center gap-1.5"
+                  aria-label={screenStreaming ? t('screenStop') : t('screenShare')}
+                >
+                  <span
+                    className={`flex h-12 w-12 items-center justify-center rounded-full text-lg transition ${
+                      screenStreaming
+                        ? 'bg-fuchsia-500/20 text-fuchsia-200 ring-1 ring-fuchsia-400/40'
+                        : 'bg-white/10 text-white hover:bg-white/15'
+                    }`}
+                  >
+                    🖥️
+                  </span>
+                  <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{screenStreaming ? t('screenStop') : t('screenShare')}</span>
+                </button>
+              </div>
+
+              {/* Fileira secundária: áudio na tela + qualidade */}
+              <div className="flex items-center justify-center gap-2">
+                {isAdmin && (
+                  <button
+                    onClick={() => setDemoScreens((d) => (d.length === 0 ? ['Usuário 3'] : d))}
+                    title={t('addDemoScreen')}
+                    className="flex h-8 min-w-28 items-center justify-center gap-1 rounded-full bg-indigo-500/15 px-3 text-[11px] font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/25"
+                  >
+                    🧪 {t('addDemoScreen')}
+                  </button>
+                )}
+                <button
+                  onClick={() => setScreenWithAudio((o) => !o)}
+                  disabled={screenStreaming}
+                  title={t('screenAudio')}
+                  className={`flex h-8 min-w-28 items-center justify-center gap-1 rounded-full px-3 text-[11px] font-semibold transition disabled:opacity-40 ${
+                    screenWithAudio
+                      ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/30'
+                      : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                  }`}
+                >
+                  {screenWithAudio ? `🔊 ${t('screenAudio')}` : `🔇 ${t('screenNoAudio')}`}
+                </button>
+                <label className="flex h-8 items-center gap-1.5 rounded-full bg-white/10 px-3 text-[11px] font-medium text-slate-300">
+                  {t('currentQuality')}
+                  <select
+                    value={quality}
+                    onChange={(e) => setQualityAndApply(e.target.value as Quality)}
+                    className="bg-transparent text-[11px] font-semibold text-white outline-none"
+                  >
+                    {QUALITY_OPTIONS.map((o) => (
+                      <option key={o.id} value={o.id}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button
+                onClick={leaveChannel}
+                className="mt-1 flex w-full max-w-xs items-center justify-center gap-1.5 rounded-xl bg-red-500/90 px-3 py-2 text-sm font-semibold text-white shadow-lg shadow-red-500/20 transition hover:bg-red-500"
+              >
+                📵 {t('leaveChannel')}
+              </button>
+            </div>
           </>
         )}
       </main>
 
       {/* Chat do canal */}
       <aside
-        className={`share-panel flex min-h-0 flex-1 flex-col rounded-2xl p-4 md:col-start-1 md:row-start-2 md:min-h-0 ${
+        className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-4 lg:col-start-1 lg:row-start-2 lg:min-h-0 ${
           mobileTab === 'chat' ? 'flex' : 'hidden'
-        } md:flex`}
+        } lg:flex`}
       >
         {!inCall ? (
-          <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
-            <span className="text-3xl">🔒</span>
-            <p className="mt-3 text-sm text-slate-400">
-              Entre em um canal de voz para conversar no chat.
-            </p>
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              {t('online')} ({onlineMembers.length})
+            </h3>
+            <div className="mt-2 flex-1 space-y-1 overflow-y-auto">
+              {onlineMembers.length === 0 ? (
+                <p className="py-8 text-center text-xs text-slate-500">{t('noOnline')}</p>
+              ) : (
+                onlineMembers.map((m) => (
+                  <div key={m.clientId} className="group flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
+                    <Avatar name={m.name} photo={m.photo} size={26} />
+                    <span className="min-w-0 flex-1 truncate">{m.name}</span>
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${m.channel === channel ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                    <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio }) }} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/5 hover:text-slate-200">⋯</button>
+                  </div>
+                ))
+              )}
+            </div>
+            {offlineMembers.length > 0 && (
+              <div className="share-panel-soft mt-3 rounded-lg p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">Offline ({offlineMembers.length})</span>
+                  <button onClick={() => void removeAllOffline()} className="rounded-md bg-red-500/20 px-2 py-1 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/30">🗑 Excluir todas</button>
+                </div>
+                <p className="mt-1 text-[10px] text-slate-500">Inativo há mais de 15 min · apague o registro para liberar o nome.</p>
+                <ul className="mt-1.5 space-y-1">
+                  {offlineMembers.map((m) => (
+                    <li key={m.clientId} className="flex items-center gap-2 text-xs text-slate-400">
+                      <Avatar name={m.name} photo={m.photo} size={20} />
+                      <span className="min-w-0 flex-1 truncate">{m.name}</span>
+                      {typeof m.lastSeen === 'number' && <span translate="no" title="Há quanto tempo saiu" className="shrink-0 text-[10px] tabular-nums text-slate-500">{formatAgo(m.lastSeen)}</span>}
+                      <button title="Ver perfil" onClick={(e) => { e.stopPropagation(); setViewProfile({ name: m.name, photo: m.photo, bio: m.bio }) }} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-slate-200">⋯</button>
+                      <button title="Apagar registro offline" onClick={() => void removeOfflineMember(m.clientId)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-red-300">✕</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <button onClick={() => resetMyName()} title="Escolhe de novo o seu nome, sem precisar abrir o perfil" className="mt-3 w-full rounded-lg bg-emerald-500/20 px-3 py-2 text-left text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30">
+              ✏️ {t('changeName')}
+            </button>
           </div>
         ) : (
           <>
-            <h3 className="text-sm font-semibold">Chat do canal · {channelLabel(channel)}</h3>
+            <h3 className="text-sm font-semibold">{t('chatTitle')} · {channelLabel(channel)}</h3>
             <div className="relative mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {chat.map((m) => (
                 <div key={m.id} className="share-panel-soft group relative rounded-lg px-3 py-2">
@@ -1348,7 +1986,7 @@ export function ShareRoom() {
                         e.stopPropagation()
                         setProfileMenuMsg(profileMenuMsg === m.id ? null : m.id)
                       }}
-                      className="shrink-0 text-slate-500 opacity-0 transition group-hover:opacity-100"
+                      className="shrink-0 text-slate-500 transition hover:text-slate-200"
                     >
                       ⋯
                     </button>
@@ -1379,22 +2017,24 @@ export function ShareRoom() {
                       </button>
                       <button
                         onClick={() => {
-                          deleteForMe(m.id)
+                          setPendingDeleteMe(m.id)
                           setProfileMenuMsg(null)
                         }}
                         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-200 hover:bg-white/5"
                       >
                         🙈 Apagar para mim
                       </button>
-                      <button
-                        onClick={() => {
-                          deleteChat(m.id)
-                          setProfileMenuMsg(null)
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-red-400 hover:bg-white/5"
-                      >
-                        🗑️ Apagar para todos
-                      </button>
+                      {(isAdmin || m.memberId === clientId) && (
+                        <button
+                          onClick={() => {
+                            deleteChat(m.id)
+                            setProfileMenuMsg(null)
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-red-400 hover:bg-white/5"
+                        >
+                          🗑️ Apagar para todos
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1444,14 +2084,14 @@ export function ShareRoom() {
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Escreva uma mensagem..."
+                placeholder={t('writeMsg')}
                 className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-800/60 px-3 text-sm outline-none focus:border-indigo-400/50"
               />
               <button
                 type="submit"
                 className="h-10 rounded-lg bg-indigo-500 px-4 text-sm font-semibold text-white transition hover:bg-indigo-400"
               >
-                Enviar
+                {t('send')}
               </button>
             </form>
           </>
@@ -1472,15 +2112,15 @@ export function ShareRoom() {
       )}
 
       {/* Barra inferior de categorias (só mobile) */}
-      <nav className="share-panel fixed inset-x-3 bottom-3 z-40 flex items-center gap-1 rounded-2xl p-2 shadow-2xl md:hidden">
+      <nav className="share-panel fixed inset-x-3 bottom-3 z-40 flex items-center gap-1 rounded-2xl p-2 shadow-2xl lg:hidden">
         <button
-          onClick={() => setMobileTab('salas')}
+          onClick={() => setMobileTab('inicio')}
           className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-[11px] font-semibold transition ${
-            mobileTab === 'salas' ? 'bg-indigo-500/25 text-indigo-200' : 'text-slate-400 hover:bg-white/5'
+            mobileTab === 'inicio' ? 'bg-indigo-500/25 text-indigo-200' : 'text-slate-400 hover:bg-white/5'
           }`}
         >
-          <span className="text-lg leading-none">🗂️</span>
-          Salas
+          <span className="text-lg leading-none">🧭</span>
+          {t('homeTab')}
         </button>
         <button
           onClick={() => setMobileTab('chamadas')}
@@ -1489,7 +2129,7 @@ export function ShareRoom() {
           }`}
         >
           <span className="text-lg leading-none">{inCall ? '🔊' : '🎧'}</span>
-          Chamadas
+          {t('callTab')}
         </button>
         <button
           onClick={() => setMobileTab('chat')}
@@ -1498,7 +2138,7 @@ export function ShareRoom() {
           }`}
         >
           <span className="text-lg leading-none">💬</span>
-          Chat
+          {t('chatTab')}
         </button>
         <button
           onClick={() => {
@@ -1510,51 +2150,33 @@ export function ShareRoom() {
           }`}
         >
           <span className="text-lg leading-none">⚙️</span>
-          Config
+          {t('configTab')}
         </button>
       </nav>
 
       {/* Painel de Configurações no mobile (perfil + avançadas) */}
       {mobileTab === 'config' && (
-        <div className="share-panel fixed inset-3 z-40 flex flex-col overflow-hidden rounded-2xl p-4 md:hidden">
+        <div className="share-panel fixed inset-3 z-40 flex flex-col overflow-hidden rounded-2xl p-4 lg:hidden">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               {configPane !== 'menu' && (
                 <button
                   onClick={() => setConfigPane('menu')}
                   className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-slate-300 transition hover:bg-white/15"
-                  aria-label="Voltar"
+                  aria-label={t('back')}
                 >
                   ←
                 </button>
               )}
               <h3 className="text-base font-bold">
-                {configPane === 'menu'
-                  ? 'Configurações'
-                  : configPane === 'perfil'
-                    ? 'Perfil'
-                    : configPane === 'avancado'
-                      ? 'Configurações avançadas'
-                      : configPane === 'audio'
-                        ? 'Áudio e vídeo'
-                        : configPane === 'aparencia'
-                          ? 'Aparência'
-                          : configPane === 'notificacoes'
-                            ? 'Notificações'
-                            : configPane === 'silencioso'
-                              ? 'Modo silencioso'
-                              : configPane === 'idioma'
-                                ? 'Idioma'
-                                : configPane === 'limpeza'
-                                  ? 'Limpeza'
-                                  : 'Sobre'}
+                {({ menu: t('configTitle'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about') } as Record<string, string>)[configPane]}
               </h3>
             </div>
             <button
-              onClick={() => setMobileTab('salas')}
+              onClick={() => setMobileTab('inicio')}
               className="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-slate-300 transition hover:bg-white/15"
             >
-              Fechar
+              {t('close')}
             </button>
           </div>
 
@@ -1562,15 +2184,15 @@ export function ShareRoom() {
             <div className="mt-4 flex flex-col gap-3 overflow-y-auto no-scrollbar">
               {(
                 [
-                  ['perfil', '👤', 'bg-indigo-500/20', 'Perfil', 'Seu nome, bio e foto'],
-                  ['audio', '🎙️', 'bg-sky-500/15', 'Áudio e vídeo', 'Volume, ruído, eco e qualidade'],
-                  ['aparencia', '🎨', 'bg-fuchsia-500/15', 'Aparência', 'Tema escuro ou claro'],
-                  ['notificacoes', '🔔', 'bg-amber-500/15', 'Notificações', 'Aviso quando alguém entra'],
-                  ['silencioso', '🤫', 'bg-slate-500/15', 'Modo silencioso', 'Entrar sem ligar o microfone'],
-                  ['idioma', '🌐', 'bg-emerald-500/15', 'Idioma', 'Português ou inglês'],
-                  ['limpeza', '🧹', 'bg-red-500/15', 'Limpeza', 'Excluir offline e restaurar padrão'],
-                  ['sobre', 'ℹ️', 'bg-cyan-500/15', 'Sobre', 'Nome, créditos e versão'],
-                  ['avancado', '🛠️', 'bg-emerald-500/15', 'Configurações avançadas', 'Administrador e mais'],
+                  ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
+                  ['audio', '🎙️', 'bg-sky-500/15', t('audioVideo'), t('audioDesc')],
+                  ['aparencia', '🎨', 'bg-fuchsia-500/15', t('appearance'), t('aparenciaDesc')],
+                  ['notificacoes', '🔔', 'bg-amber-500/15', t('notifications'), t('notificacoesDesc')],
+                  ['silencioso', '🤫', 'bg-slate-500/15', t('silentMode'), t('silenciosoDesc')],
+                  ['idioma', '🌐', 'bg-emerald-500/15', t('language'), t('idiomaDesc')],
+                  ['limpeza', '🧹', 'bg-red-500/15', t('cleanup'), t('limpezaDesc')],
+                  ['sobre', 'ℹ️', 'bg-cyan-500/15', t('about'), t('sobreDesc')],
+                  ['avancado', '🛠️', 'bg-emerald-500/15', t('advanced'), t('avancadoDesc')],
                 ] as const
               ).map(([id, icon, bg, label, desc]) => (
                 <button
@@ -1600,24 +2222,24 @@ export function ShareRoom() {
                       👤
                     </span>
                     <div>
-                      <div className="text-sm font-semibold">{profile.name || 'Sem nome'}</div>
-                      <div className="text-xs text-slate-400">Seu perfil público nas salas</div>
+                    <div className="text-sm font-semibold">{profile.name || t('noName')}</div>
+                    <div className="text-xs text-slate-400">{t('publicProfile')}</div>
                     </div>
                   </div>
                   <button
                     onClick={() => {
                       setEditProfileOpen(true)
-                      setMobileTab('salas')
+                      setMobileTab('inicio')
                     }}
                     className="w-full rounded-xl bg-indigo-500/20 px-4 py-3 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/30"
                   >
-                    ✏️ Editar perfil
+                    ✏️ {t('editProfile')}
                   </button>
                   <button
                     onClick={() => resetMyName()}
                     className="w-full rounded-xl bg-emerald-500/20 px-4 py-3 text-left text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
                   >
-                    ✏️ Trocar meu nome
+                    ✏️ {t('changeName')}
                   </button>
                 </section>
               )}
@@ -1625,9 +2247,9 @@ export function ShareRoom() {
               {/* Áudio e vídeo */}
               {configPane === 'audio' && (
               <section className="share-panel-soft rounded-xl p-3">
-                <h4 className="mb-2 text-sm font-bold">🎙️ Áudio e vídeo</h4>
+                <h4 className="mb-2 text-sm font-bold">🎙️ {t('audioVideo')}</h4>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-slate-400">Volume do som</span>
+                  <span className="text-xs text-slate-400">{t('volume')}</span>
                   <span className="text-xs tabular-nums text-slate-300">{Math.round(settings.volume * 100)}%</span>
                 </div>
                 <input
@@ -1637,12 +2259,12 @@ export function ShareRoom() {
                   value={Math.round(settings.volume * 100)}
                   onChange={(e) => setSetting('volume', Number(e.target.value) / 100)}
                   className="w-full accent-indigo-400"
-                  aria-label="Volume do som"
+                  aria-label={t('volume')}
                 />
                 {(
                   [
-                    ['noiseSuppression', 'Redução de ruído'],
-                    ['echoCancellation', 'Cancelamento de eco'],
+                    ['noiseSuppression', t('noiseLabel')],
+                    ['echoCancellation', t('echoLabel')],
                   ] as const
                 ).map(([key, label]) => (
                   <button
@@ -1666,28 +2288,17 @@ export function ShareRoom() {
                     </span>
                   </button>
                 ))}
-                <label className="mt-1 block text-xs text-slate-400">Qualidade padrão</label>
-                <select
-                  value={settings.defaultQuality}
-                  onChange={(e) => setSetting('defaultQuality', e.target.value as Quality)}
-                  className="mt-1 w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm outline-none"
-                >
-                  <option value="auto">Automática</option>
-                  <option value="alta">Alta</option>
-                  <option value="media">Média</option>
-                  <option value="baixa">Baixa</option>
-                </select>
               </section>
               )}
 
               {/* Aparência */}
               {configPane === 'aparencia' && (
               <section className="share-panel-soft rounded-xl p-3">
-                <h4 className="mb-2 text-sm font-bold">🎨 Aparência</h4>
+                <h4 className="mb-2 text-sm font-bold">🎨 {t('appearance')}</h4>
                 <SwitchRow
                   checked={settings.theme === 'light'}
                   onChecked={(v) => setSetting('theme', v ? 'light' : 'dark')}
-                  title={settings.theme === 'light' ? 'Tema claro' : 'Tema escuro'}
+                  title={settings.theme === 'light' ? t('lightTheme') : t('darkTheme')}
                 />
               </section>
               )}
@@ -1703,8 +2314,8 @@ export function ShareRoom() {
                       void Notification.requestPermission()
                     }
                   }}
-                  title="Notificações"
-                  desc="Aviso quando alguém entra na sala"
+                  title={t('notifications')}
+                  desc={t('notifyDesc')}
                 />
               </section>
               )}
@@ -1715,8 +2326,8 @@ export function ShareRoom() {
                 <SwitchRow
                   checked={settings.silentMode}
                   onChecked={(v) => setSetting('silentMode', v)}
-                  title="Modo silencioso"
-                  desc="Entrar nas salas sem ativar o microfone"
+                  title={t('silentMode')}
+                  desc={t('silentDesc')}
                 />
               </section>
               )}
@@ -1724,7 +2335,7 @@ export function ShareRoom() {
               {/* Idioma */}
               {configPane === 'idioma' && (
               <section className="share-panel-soft rounded-xl p-3">
-                <h4 className="mb-2 text-sm font-bold">🌐 Idioma</h4>
+                <h4 className="mb-2 text-sm font-bold">🌐 {t('language')}</h4>
                 <div className="flex gap-1 rounded-lg bg-white/5 p-1">
                   {(['pt', 'en'] as const).map((lang) => (
                     <button
@@ -1744,13 +2355,19 @@ export function ShareRoom() {
               {/* Limpeza */}
               {configPane === 'limpeza' && (
               <section className="share-panel-soft rounded-xl p-3">
-                <h4 className="mb-2 text-sm font-bold">🧹 Limpeza</h4>
+                <h4 className="mb-2 text-sm font-bold">🧹 {t('cleanup')}</h4>
                 <button
                   onClick={() => void removeAllOffline()}
                   disabled={offlineMembers.length === 0}
                   className="w-full rounded-lg bg-red-500/15 px-3 py-2 text-left text-sm font-semibold text-red-300 ring-1 ring-red-400/30 transition enabled:hover:bg-red-500/25 disabled:opacity-40 disabled:ring-transparent"
                 >
-                  🗑 Excluir perfis offline ({offlineMembers.length})
+                  🗑 {t('deleteOffline')} ({offlineMembers.length})
+                </button>
+                <button
+                  onClick={() => setShowClearChats(true)}
+                  className="mt-2 w-full rounded-lg bg-indigo-500/15 px-3 py-2 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/25"
+                >
+                  💬 {t('clearAllChats')}
                 </button>
                 <button
                   onClick={() => {
@@ -1763,7 +2380,7 @@ export function ShareRoom() {
                   }}
                   className="mt-2 w-full rounded-lg bg-white/5 px-3 py-2 text-left text-sm font-semibold text-slate-300 ring-1 ring-white/10 transition hover:bg-white/10"
                 >
-                  ↩️ Restaurar preferências padrão
+                  ↩️ {t('restorePrefs')}
                 </button>
               </section>
               )}
@@ -1771,11 +2388,21 @@ export function ShareRoom() {
               {/* Sobre */}
               {configPane === 'sobre' && (
               <section className="share-panel-soft rounded-xl p-3">
-                <h4 className="mb-2 text-sm font-bold">ℹ️ Sobre</h4>
-                <p className="text-sm">
-                  ShareRoom — canais de voz e vídeo para encontrar pessoas e conversar.
+                <div className="mb-2 flex items-center gap-2">
+                  <img src="/logo.png" alt="Orbit Room" className="h-7 w-7 object-contain drop-shadow" />
+                  <h4 className="text-sm font-extrabold tracking-tight">Orbit Room</h4>
+                  <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">v0.5</span>
+                </div>
+                {t('aboutText')
+                  .split('\n\n')
+                  .map((p) => (
+                    <p key={p.slice(0, 20)} className="text-sm leading-relaxed text-slate-300">
+                      {p}
+                    </p>
+                  ))}
+                <p className="mt-3 border-t border-white/10 pt-2 text-[11px] font-medium text-slate-400">
+                  {t('aboutCredits')}
                 </p>
-                <p className="mt-1 text-xs text-slate-400">Criado por Noah · Versão inicial</p>
               </section>
               )}
 
@@ -1783,7 +2410,7 @@ export function ShareRoom() {
               {configPane === 'avancado' && (
               <>
               <div className="share-panel-soft flex items-center justify-between gap-2 rounded-xl p-3">
-                <span className="text-sm font-medium">Administrador</span>
+                <span className="text-sm font-medium">{t('admin')}</span>
                 {!adminOn ? (
                   <form
                     onSubmit={(e) => {
@@ -1796,7 +2423,7 @@ export function ShareRoom() {
                     <input
                       name="adminPwd"
                       type="password"
-                      placeholder="Senha"
+                      placeholder={t('password')}
                       autoComplete="current-password"
                       className="h-8 w-28 rounded border border-white/20 bg-white/5 px-2 text-xs outline-none"
                     />
@@ -1831,27 +2458,220 @@ export function ShareRoom() {
                 onClick={() => resetMyName()}
                 className="w-full rounded-xl bg-emerald-500/20 px-4 py-3 text-left text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
               >
-                ✏️ Trocar meu nome
-              </button>
-              <button
-                onClick={() => void removeAllOffline()}
-                disabled={offlineMembers.length === 0}
-                className="w-full rounded-xl bg-indigo-500/20 px-4 py-3 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition enabled:hover:bg-indigo-500/30 disabled:opacity-40 disabled:ring-transparent"
-              >
-                🔄 Resetar nomes dos perfis
+                ✏️ {t('changeName')}
               </button>
               {offlineMembers.length > 0 && (
                 <button
                   onClick={() => void removeAllOffline()}
                   className="w-full rounded-xl bg-red-500/15 px-4 py-3 text-left text-sm font-semibold text-red-300 ring-1 ring-red-400/30 transition hover:bg-red-500/25"
                 >
-                  🗑 Excluir todos os offline ({offlineMembers.length})
+                  🗑 {t('deleteAllOffline')} ({offlineMembers.length})
                 </button>
               )}
               </>
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Janela "ver mais" com a lista de quem está compartilhando tela */}
+      {showMoreScreens && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+          <div className="share-panel w-full max-w-sm rounded-2xl p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-lg font-bold">🖥️ {t('whoIsSharing')}</div>
+              <button
+                onClick={() => setShowMoreScreens(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-sm text-slate-200 transition hover:bg-white/15"
+                aria-label={t('close')}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex max-h-72 flex-col gap-2 overflow-y-auto no-scrollbar">
+              {extraScreens.map((tile) => (
+                <div key={tile.id} className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2">
+                  <Avatar name={tile.name} photo={tile.photo} size={30} />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-100">{tile.name}</span>
+                  <span className="flex flex-none items-center gap-1 text-[11px] text-emerald-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> 🖥️ {t('screenShort')}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setShowMoreScreens(false)
+                      setWatchScreen(tile)
+                    }}
+                    className="flex-none rounded-lg bg-indigo-500/20 px-3 py-1.5 text-[11px] font-bold text-indigo-100 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/30"
+                  >
+                    ▶ {t('watchScreen')}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tela cheia ao apertar "Assistir" no popup de mais telas */}
+      {watchScreen && (
+        <div className="fixed inset-0 z-[110] flex flex-col bg-black">
+          <div className="flex items-center justify-between gap-2 bg-black/80 px-4 py-2">
+            <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-white">
+              <span className="h-2 w-2 flex-none rounded-full bg-emerald-400" />
+              <span className="truncate">{watchScreen.name}</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => toggleTileFullscreen(watchScreen.id)}
+                title="Tela cheia (todo o computador / celular)"
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-sm text-white transition hover:bg-white/20"
+              >
+                ⛶
+              </button>
+              <button
+                onClick={() => setWatchScreen(null)}
+                title={t('closeWatch')}
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-sm text-white transition hover:bg-red-500"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 p-2">
+            <div ref={(el) => { tileElsRef.current[watchScreen.id] = el }} className="h-full w-full">
+              {watchScreen.hasVideo ? (
+                <video
+                  autoPlay
+                  playsInline
+                  muted={!!screenMuted[watchScreen.id]}
+                  className="h-full w-full object-contain"
+                  ref={(el) => bind(el, watchScreen.stream)}
+                />
+              ) : (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-center">
+                  <div className="text-6xl">🖥️</div>
+                  <span className="text-lg font-semibold text-indigo-200">{watchScreen.name}</span>
+                  <span className="rounded-md bg-indigo-500/20 px-3 py-1 text-xs font-medium text-indigo-300">{t('screenSimLabel')}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Aviso de desconexão por ficar sozinho no canal (AFK) */}
+      {kickNotice && (
+        <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/60 p-4">
+          <div className="share-panel w-full max-w-sm rounded-2xl p-6 text-center">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-500/20 text-2xl">💤</div>
+            <h3 className="text-lg font-bold">{t('soloKickedTitle')}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-300">{t('soloKicked')}</p>
+            <button
+              onClick={() => setKickNotice(false)}
+              className="mt-5 w-full rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-400"
+            >
+              {t('gotIt')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Seletor de chat para limpar todas as conversas */}
+      {showClearChats && (
+        <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/60 p-4">
+          <div className="share-panel w-full max-w-sm rounded-2xl p-5">
+            <div className="mb-1 flex items-center gap-2 text-base font-bold">💬 {t('clearAllChats')}</div>
+            <p className="mb-4 text-xs text-slate-400">{t('clearAllChatsDesc')}</p>
+            <div className="space-y-2">
+              {DEFAULT_CHANNELS.map((c, i) => (
+                <button
+                  key={c.id}
+                  onClick={() => {
+                    setShowClearChats(false)
+                    setPendingClearChannel(c.id)
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5 text-left transition hover:bg-white/10"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-500/20 text-sm font-bold text-indigo-200 ring-1 ring-indigo-400/30">
+                    {i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold">{c.label}</span>
+                    <span className="block truncate text-[11px] text-slate-400">{c.description}</span>
+                  </span>
+                  <span className="shrink-0 text-slate-500">🗑</span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowClearChats(false)}
+              className="mt-4 w-full rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/15"
+            >
+              {t('no')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmação para apagar mensagem ou limpar chat */}
+      {(pendingDeleteMe || pendingClearChannel) && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4">
+          <div className="share-panel w-full max-w-sm rounded-2xl p-6 text-center">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-red-500/20 text-2xl">🗑️</div>
+            <h3 className="text-lg font-bold">
+              {pendingDeleteMe ? t('confirmDeleteTitle') : t('confirmClearTitle')}
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-300">
+              {pendingDeleteMe ? t('confirmDeleteMsg') : t('confirmClearMsg')}
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => {
+                  setPendingDeleteMe(null)
+                  setPendingClearChannel(null)
+                }}
+                className="flex-1 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-white/15"
+              >
+                {t('no')}
+              </button>
+              <button
+                onClick={() => {
+                  if (pendingDeleteMe) deleteForMe(pendingDeleteMe)
+                  if (pendingClearChannel) void clearChatChannel(pendingClearChannel)
+                  setPendingDeleteMe(null)
+                  setPendingClearChannel(null)
+                }}
+                className="flex-1 rounded-xl bg-red-500 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-400"
+              >
+                {t('yes')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pedido de permissão de notificações na primeira visita */}
+      {showNotifyPrompt && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 pb-24 sm:items-center sm:pb-4">
+          <div className="share-panel w-full max-w-sm rounded-2xl p-5">
+            <div className="mb-1 flex items-center gap-2 text-lg font-bold">🔔 {t('notifyPromptTitle')}</div>
+            <p className="mb-4 text-sm text-slate-300">{t('notifyPromptDesc')}</p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={acceptNotifyPrompt}
+                className="w-full rounded-xl bg-emerald-500/20 px-4 py-2.5 text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/40 transition hover:bg-emerald-500/30"
+              >
+                {t('notifyPromptYes')}
+              </button>
+              <button
+                onClick={dismissNotifyPrompt}
+                className="w-full rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-white/15"
+              >
+                {t('notifyPromptLater')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

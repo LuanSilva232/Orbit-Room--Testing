@@ -164,6 +164,25 @@ export class RtcEngine {
     }
   }
 
+  // Limita a taxa de bits de envio de uma trilha (evita travadas no upload
+  // durante o compartilhamento de tela em conexões mais lentas).
+  async setTrackBitrate(track: MediaStreamTrack, maxBitrate: number): Promise<void> {
+    for (const peer of this.peers.values()) {
+      const sender = peer.pc.getSenders().find((s) => s.track === track)
+      if (!sender) continue
+      try {
+        const params = sender.getParameters()
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}]
+        }
+        params.encodings[0] = { ...params.encodings[0], maxBitrate }
+        await sender.setParameters(params)
+      } catch {
+        /* track ainda não negociado — ignora */
+      }
+    }
+  }
+
   removeLocalStream(stream: MediaStream): void {
     const idx = this.localStreams.indexOf(stream)
     if (idx >= 0) this.localStreams.splice(idx, 1)

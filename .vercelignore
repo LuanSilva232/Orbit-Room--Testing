@@ -1,5 +1,6 @@
-# Não precisa subir para a Vercel
+node_modules
+.next
+out
+build
 app-vanilla
 attachements
-docs
-remote-control

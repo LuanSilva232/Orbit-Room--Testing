@@ -15,6 +15,7 @@ import { ensureDb, getSql } from '@/db'
 // serverless (Vercel), onde cada requisição pode cair numa instância diferente
 // e o estado precisa ser compartilhado/centralizado.
 export const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline ("fantasma")
+export const SOLO_KICK_MS = 5 * 60 * 1000 // 5min sozinho no canal = desconecta automaticamente
 
 type ClientRow = {
   client_id: string
@@ -25,6 +26,7 @@ type ClientRow = {
   joined_at: string | number
   last_seen: string | number
   left_at: string | number | null
+  single_since: string | number | null
 }
 
 type TrackRow = { client_id: string; track_ids: string[] }
@@ -53,7 +55,7 @@ function toMember(r: ClientRow): Member {
 
 async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at, single_since
     FROM rtc_clients WHERE client_id = ${clientId}
   `
   return rows[0]
@@ -61,7 +63,7 @@ async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
 
 async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
   return getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at
+    SELECT client_id, name, photo, bio, channel, joined_at, last_seen, left_at, single_since
     FROM rtc_clients
     WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
   `
@@ -195,6 +197,7 @@ export async function joinChannel(
     } else {
       await notifyChannel(channel, (m) => ({ type: 'peer-updated', member: m }), clientId)
     }
+    await refreshSoloState(channel)
     const members = (await channelRows(channel))
       .filter((r) => r.client_id !== clientId)
       .map(toMember)
@@ -234,6 +237,7 @@ export async function joinChannel(
 
   await notifyChannel(channel, () => ({ type: 'peer-joined', member }), clientId)
 
+  await refreshSoloState(channel)
   const members = (await channelRows(channel))
     .filter((r) => r.client_id !== clientId)
     .map(toMember)
@@ -256,6 +260,8 @@ export async function leaveChannel(clientId: string): Promise<void> {
     SET left_at = ${nowMs()}, last_seen = ${nowMs()}
     WHERE client_id = ${clientId}
   `
+  // Se sobrar só 1 pessoa no canal, inicia a contagem para desconexão (AFK).
+  await refreshSoloState(stored.channel as ChannelId)
 }
 
 export async function enqueueSignal(
@@ -290,6 +296,8 @@ export async function broadcastScreenKind(clientId: string, trackIds: string[]):
 
 export async function drainMailbox(clientId: string): Promise<MailboxMessage[]> {
   await ensureDb()
+  // Se estiver sozinho há 5min+, desconecta automaticamente (o aviso entra na caixa).
+  await maybeKickSolo(clientId)
   const sql = getSql()
   const rows = await sql<{ id: string; payload: Record<string, unknown> }[]>`
     SELECT id, payload FROM rtc_mailbox WHERE to_client = ${clientId} ORDER BY id
@@ -345,6 +353,14 @@ export async function deleteChat(messageId: string): Promise<boolean> {
   return true
 }
 
+/** Apaga todas as mensagens de um chat (canal) e avisa os membros online do canal. */
+export async function clearChatChannel(channel: ChannelId): Promise<number> {
+  await ensureDb()
+  const res = await getSql()`DELETE FROM rtc_chat WHERE channel = ${channel}`
+  await notifyChannel(channel, () => ({ type: 'chat-cleared', channel }))
+  return res.count ?? 0
+}
+
 export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
   await ensureDb()
   type ChatRow = {
@@ -376,6 +392,51 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
     photo: r.photo ?? undefined,
     bio: r.bio ?? undefined,
   }))
+}
+
+/**
+ * Recalcula o estado "sozinho" de um canal após alguém entrar ou sair.
+ * - Se sobrar exatamente 1 pessoa, marca o instante em que ela ficou sozinha
+ *   (apenas na primeira vez — o relógio não reinicia a cada heartbeat).
+ * - Se houver 2+ pessoas (ou nenhuma), ninguém está "sozinho".
+ */
+async function refreshSoloState(channel: ChannelId): Promise<void> {
+  const rows = await channelRows(channel)
+  const sql = getSql()
+  if (rows.length === 1) {
+    const lone = rows[0]
+    if (lone.single_since == null) {
+      await sql`UPDATE rtc_clients SET single_since = ${nowMs()} WHERE client_id = ${lone.client_id}`
+    }
+  } else {
+    await sql`
+      UPDATE rtc_clients SET single_since = NULL
+      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+    `
+  }
+}
+
+/**
+ * Se o usuário estiver SOZINHO no canal há 5 minutos ou mais, desconecta-o
+ * automaticamente (AFK) e o avisa. Chamado no heartbeat (drainMailbox).
+ */
+async function maybeKickSolo(clientId: string): Promise<void> {
+  const stored = await getClientRow(clientId)
+  if (!stored || stored.left_at !== null || stored.left_at !== undefined) return
+  const rows = await channelRows(stored.channel as ChannelId)
+  if (rows.length !== 1) return
+  const lone = rows[0]
+  if (lone.client_id !== clientId) return
+  if (lone.single_since == null) return
+  if (nowMs() - Number(lone.single_since) < SOLO_KICK_MS) return
+  // Avisa antes de desconectar para o próprio usuário entender o motivo.
+  await enqueueTo(clientId, { type: 'kicked', reason: 'solo' })
+  await getSql()`
+    UPDATE rtc_clients
+    SET left_at = ${nowMs()}, last_seen = ${nowMs()}, single_since = NULL
+    WHERE client_id = ${clientId}
+  `
+  await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${clientId}`
 }
 
 /** Apaga o registro de um único usuário offline (fantasma). */

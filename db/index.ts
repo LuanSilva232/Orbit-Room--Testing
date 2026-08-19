@@ -45,6 +45,10 @@ export function ensureDb(): Promise<void> {
           ADD COLUMN IF NOT EXISTS left_at bigint
       `
       await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS single_since bigint
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS rtc_mailbox (
           id        bigserial PRIMARY KEY,
           to_client text NOT NULL,
@@ -77,6 +81,59 @@ export function ensureDb(): Promise<void> {
         CREATE TABLE IF NOT EXISTS rtc_screen_tracks (
           client_id text PRIMARY KEY,
           track_ids jsonb NOT NULL
+        )
+      `
+      // --- Contas de usuário (login com Google) ---
+      await sql`
+        CREATE TABLE IF NOT EXISTS users (
+          id                 text PRIMARY KEY,
+          email              text NOT NULL UNIQUE,
+          email_verified_at  bigint,
+          password_hash      text,
+          status             text NOT NULL DEFAULT 'active',
+          display_name       text,
+          bio                text,
+          photo              text,
+          rooms              jsonb NOT NULL DEFAULT '[]'::jsonb,
+          created_at         bigint NOT NULL,
+          updated_at         bigint NOT NULL
+        )
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS oauth_accounts (
+          id                 text PRIMARY KEY,
+          user_id            text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          provider           text NOT NULL,
+          provider_subject   text NOT NULL,
+          created_at         bigint NOT NULL,
+          UNIQUE (provider, provider_subject)
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS oauth_accounts_user_idx
+          ON oauth_accounts (user_id)
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id         text PRIMARY KEY,
+          user_id    text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash text NOT NULL UNIQUE,
+          created_at bigint NOT NULL,
+          expires_at bigint NOT NULL
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS sessions_user_idx
+          ON sessions (user_id)
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS oauth_states (
+          id            text PRIMARY KEY,
+          state         text NOT NULL UNIQUE,
+          code_verifier text NOT NULL,
+          redirect_to   text NOT NULL DEFAULT '/',
+          created_at    bigint NOT NULL,
+          expires_at    bigint NOT NULL
         )
       `
     })().catch((err) => {

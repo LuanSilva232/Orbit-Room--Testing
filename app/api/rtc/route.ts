@@ -143,6 +143,14 @@ export async function POST(req: Request) {
       return ok<{ deleted: boolean }>({ deleted: await store.deleteChat(messageId) })
     }
 
+    if (action === 'chat-clear') {
+      const channel = typeof body.channel === 'string' ? body.channel : 'geral'
+      if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      return ok<{ cleared: number }>({
+        cleared: await store.clearChatChannel(channel as ChannelId),
+      })
+    }
+
     if (action === 'check-name') {
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       const exceptClientId = typeof body.exceptClientId === 'string' ? body.exceptClientId : undefined
