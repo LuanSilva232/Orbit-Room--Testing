@@ -507,7 +507,11 @@ async function refreshSoloState(channel: ChannelId): Promise<void> {
  */
 async function maybeKickSolo(clientId: string): Promise<void> {
   const stored = await getClientRow(clientId)
-  if (!stored || stored.left_at !== null || stored.left_at !== undefined) return
+  // Sai cedo se não existir ou se já marcou saída (left_at preenchido).
+  if (!stored || stored.left_at != null) return
+  // Presença no lobby 'geral' (quem só abriu o site e não entrou em sala)
+  // não deve ser "expulso" por ficar sozinho — isso só vale para salas.
+  if (stored.channel === 'geral') return
   const rows = await channelRows(stored.channel as ChannelId)
   if (rows.length !== 1) return
   const lone = rows[0]
