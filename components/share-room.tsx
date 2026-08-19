@@ -1700,33 +1700,33 @@ export function ShareRoom() {
           <div className="my-auto grid grid-cols-2 gap-3">
             <button
               onClick={() => setInicioView('publicas')}
-              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/15 ring-1 ring-indigo-400/20 transition hover:scale-[1.03] hover:from-indigo-500/40 hover:to-fuchsia-500/25"
+              className="group flex h-28 flex-col items-center justify-center gap-1 rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/15 ring-1 ring-indigo-400/20 transition hover:scale-[1.03] hover:from-indigo-500/40 hover:to-fuchsia-500/25"
             >
-              <span className="text-3xl drop-shadow">🌐</span>
+              <span className="text-2xl drop-shadow">🌐</span>
               <span className="px-2 text-center text-sm font-bold leading-tight">{t('publicRooms')}</span>
               <span className="px-3 text-center text-[10px] text-indigo-200/70">{t('publicRoomsDesc')}</span>
             </button>
             <button
               onClick={() => setInicioView('privadas')}
-              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-amber-500/25 to-orange-500/10 ring-1 ring-amber-400/20 transition hover:scale-[1.03] hover:from-amber-500/35 hover:to-orange-500/20"
+              className="group flex h-28 flex-col items-center justify-center gap-1 rounded-2xl bg-gradient-to-br from-amber-500/25 to-orange-500/10 ring-1 ring-amber-400/20 transition hover:scale-[1.03] hover:from-amber-500/35 hover:to-orange-500/20"
             >
-              <span className="text-3xl drop-shadow">🔒</span>
+              <span className="text-2xl drop-shadow">🔒</span>
               <span className="px-2 text-center text-sm font-bold leading-tight">{t('privateRooms')}</span>
               <span className="px-3 text-center text-[10px] text-amber-200/70">{t('privateRoomsDesc')}</span>
             </button>
             <button
               onClick={() => setInicioView('criar')}
-              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-emerald-500/25 to-teal-500/10 ring-1 ring-emerald-400/20 transition hover:scale-[1.03] hover:from-emerald-500/35 hover:to-teal-500/20"
+              className="group flex h-28 flex-col items-center justify-center gap-1 rounded-2xl bg-gradient-to-br from-emerald-500/25 to-teal-500/10 ring-1 ring-emerald-400/20 transition hover:scale-[1.03] hover:from-emerald-500/35 hover:to-teal-500/20"
             >
-              <span className="text-3xl drop-shadow">➕</span>
+              <span className="text-2xl drop-shadow">➕</span>
               <span className="px-2 text-center text-sm font-bold leading-tight">{t('createRoom')}</span>
               <span className="px-3 text-center text-[10px] text-emerald-200/70">{t('createRoomDesc')}</span>
             </button>
             <button
               onClick={() => setInicioView('minhas')}
-              className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-sky-500/25 to-cyan-500/10 ring-1 ring-sky-400/20 transition hover:scale-[1.03] hover:from-sky-500/35 hover:to-cyan-500/20"
+              className="group flex h-28 flex-col items-center justify-center gap-1 rounded-2xl bg-gradient-to-br from-sky-500/25 to-cyan-500/10 ring-1 ring-sky-400/20 transition hover:scale-[1.03] hover:from-sky-500/35 hover:to-cyan-500/20"
             >
-              <span className="text-3xl drop-shadow">📁</span>
+              <span className="text-2xl drop-shadow">📁</span>
               <span className="px-2 text-center text-sm font-bold leading-tight">{t('myRooms')}</span>
               <span className="px-3 text-center text-[10px] text-sky-200/70">{t('myRoomsDesc')}</span>
             </button>
