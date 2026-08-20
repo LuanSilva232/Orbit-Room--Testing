@@ -17,6 +17,7 @@ import {
   type Profile,
   type Quality,
   QUALITY_OPTIONS,
+  type Room,
   type SignalKind,
 } from '@/lib/rtc/types'
 
@@ -404,6 +405,83 @@ export function ShareRoom() {
   // Categoria ativa no mobile (barra inferior). Desktop não usa.
   const [mobileTab, setMobileTab] = useState<'inicio' | 'chamadas' | 'chat' | 'config'>('inicio')
   const [inicioView, setInicioView] = useState<'home' | 'publicas' | 'privadas' | 'criar' | 'minhas'>('home')
+
+  // ---- Salas personalizadas ----
+  const [rooms, setRooms] = useState<Room[]>([]) // salas públicas de todos
+  const [myRooms, setMyRooms] = useState<Room[]>([]) // salas que criei
+  const [newRoomName, setNewRoomName] = useState('')
+  const [newRoomPrivate, setNewRoomPrivate] = useState(false)
+  const [newRoomPassword, setNewRoomPassword] = useState('')
+  const [creatingRoom, setCreatingRoom] = useState(false)
+  // senha para entrar em sala privada
+  const [joinPasswordOpen, setJoinPasswordOpen] = useState(false)
+  const [joinPasswordRoom, setJoinPasswordRoom] = useState<Room | null>(null)
+  const [joinPasswordValue, setJoinPasswordValue] = useState('')
+  const [joinPasswordBusy, setJoinPasswordBusy] = useState(false)
+  // convites de sala
+  const [inviteRoom, setInviteRoom] = useState<Room | null>(null)
+  const [inviteFriends, setInviteFriends] = useState<{ id: string; displayName: string; photo: string | null; online: boolean }[]>([])
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const roomLabelsRef = useRef<Record<string, string>>({})
+
+  const loadRooms = useCallback(async () => {
+    const [pub, mine] = await Promise.all([
+      apiClient.get<{ rooms: Room[] }>('/api/rooms'),
+      apiClient.get<{ rooms: Room[] }>('/api/rooms?mine=1'),
+    ])
+    if (pub.success) setRooms(pub.data.rooms)
+    if (mine.success) setMyRooms(mine.data.rooms)
+  }, [])
+
+  useEffect(() => {
+    const map: Record<string, string> = {}
+    for (const r of [...rooms, ...myRooms]) map[r.id] = r.name
+    roomLabelsRef.current = map
+  }, [rooms, myRooms])
+
+  useEffect(() => {
+    void loadRooms()
+  }, [loadRooms])
+
+  const createRoom = useCallback(async () => {
+    const name = newRoomName.trim()
+    if (!name) return
+    setCreatingRoom(true)
+    const res = await apiClient.post<{ room: Room }>('/api/rooms', {
+      name,
+      isPrivate: newRoomPrivate,
+      password: newRoomPassword.trim(),
+    })
+    setCreatingRoom(false)
+    if (!res.success) {
+      toast.error(res.error || 'Não foi possível criar a sala.')
+      return
+    }
+    setNewRoomName('')
+    setNewRoomPrivate(false)
+    setNewRoomPassword('')
+    await loadRooms()
+    setInicioView('minhas')
+    toast.success('Sala criada! Entre nela pela aba Minhas salas.')
+  }, [newRoomName, newRoomPrivate, newRoomPassword, loadRooms])
+
+  const deleteRoom = useCallback(
+    async (id: string) => {
+      const res = await apiClient.delete<{ ok: boolean }>(`/api/rooms?id=${encodeURIComponent(id)}`)
+      if (!res.success) {
+        toast.error(res.error || 'Não foi possível excluir a sala.')
+        return
+      }
+      if (channel === id) {
+        setChannel('geral')
+        setInCall(false)
+        inCallRef.current = false
+        channelRef.current = 'geral'
+      }
+      void loadRooms()
+    },
+    [channel, loadRooms]
+  )
   // Sub-tela do painel de Configurações no mobile (cada categoria abre a sua).
   const [configPane, setConfigPane] = useState<
     | 'menu'
@@ -862,7 +940,7 @@ export function ShareRoom() {
         // Notificação (se ativada nas Configurações) quando alguém entra na sala.
         if (settings.notifications && peerId !== clientIdRef.current && document.hidden) {
           try {
-            new Notification(`${msg.member.name} ${t('notifyJoined')} ${channelLabel(channelRef.current)}`, {
+            new Notification(`${msg.member.name} ${t('notifyJoined')} ${roomLabelsRef.current[channelRef.current] ?? channelLabel(channelRef.current)}`, {
               body: t('notifyBodyJoined'),
             })
           } catch {
@@ -875,7 +953,7 @@ export function ShareRoom() {
         if (settings.notifications && msg.clientId !== clientIdRef.current && document.hidden) {
           const name = remotePeersRef.current[msg.clientId]?.name ?? t('noName')
           try {
-            new Notification(`${name} ${t('notifyLeft')} ${channelLabel(channelRef.current)}`, {
+            new Notification(`${name} ${t('notifyLeft')} ${roomLabelsRef.current[channelRef.current] ?? channelLabel(channelRef.current)}`, {
               body: t('notifyBodyLeft'),
             })
           } catch {
@@ -1088,7 +1166,7 @@ export function ShareRoom() {
 
   // ----- join / leave channel + profile -----
   const joinChannel = useCallback(
-    async (channelId: ChannelId) => {
+    async (channelId: ChannelId, password?: string) => {
       if (!clientIdRef.current) return
       // Só evita clicar de novo quando já estamos DENTRO desse canal.
       // (O "geral" é o padrão da página, então antes de entrar ele não pode bloquear.)
@@ -1117,6 +1195,7 @@ export function ShareRoom() {
           photo: profileRef.current.photo,
           bio: profileRef.current.bio,
           channel: channelId,
+          password: password ?? '',
         }
       )
       if (!res.success) {
@@ -1147,6 +1226,41 @@ export function ShareRoom() {
     },
     [reacquire, replaceLocalStream, settings.silentMode]
   )
+
+  // Abre uma sala: pede senha se for privada, senão entra direto.
+  const openRoom = useCallback(
+    (room: Room) => {
+      if (room.hasPassword) {
+        setJoinPasswordRoom(room)
+        setJoinPasswordValue('')
+        setJoinPasswordOpen(true)
+      } else {
+        void joinChannel(room.id)
+      }
+    },
+    [joinChannel]
+  )
+  const submitJoinPassword = useCallback(async () => {
+    if (!joinPasswordRoom) return
+    setJoinPasswordBusy(true)
+    try {
+      await joinChannel(joinPasswordRoom.id, joinPasswordValue)
+    } finally {
+      setJoinPasswordBusy(false)
+    }
+    setJoinPasswordOpen(false)
+    setJoinPasswordRoom(null)
+  }, [joinPasswordRoom, joinPasswordValue, joinChannel])
+  const openInvite = useCallback(async (room: Room) => {
+    setInviteRoom(room)
+    setInviteLoading(true)
+    try {
+      const res = await apiClient.get<{ friends: { id: string; displayName: string; photo: string | null; online: boolean }[] }>('/api/social')
+      setInviteFriends(res.success ? res.data?.friends ?? [] : [])
+    } finally {
+      setInviteLoading(false)
+    }
+  }, [])
 
   const leaveChannel = useCallback(() => {
     engineRef.current?.closeAll()
@@ -1886,8 +2000,8 @@ export function ShareRoom() {
       {/* Sidebar */}
       <aside
         className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-3 lg:col-start-1 lg:row-start-1 lg:overflow-y-auto ${
-          !inCall ? 'lg:row-span-2' : ''
-        } ${mobileTab === 'inicio' ? 'flex' : 'hidden'} lg:flex`}
+          mobileTab === 'inicio' ? 'flex' : 'hidden'
+        } lg:flex`}
       >
         <div className="flex flex-col items-center px-1 pt-1 text-center">
           <img
@@ -2002,31 +2116,308 @@ export function ShareRoom() {
             {inicioView === 'publicas' ? (
               <div className="mt-3 flex min-h-0 flex-1 flex-col">
                 <p className="mb-2 text-center text-xs font-medium text-slate-400">{t('subtitle')}</p>
-                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
-                {DEFAULT_CHANNELS.map((c) => {
-                  const active = inCall && channel === c.id
-                  const count = Math.min(
-                    onlineMembers.filter((m) => m.channel === c.id).length,
-                    10
-                  )
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => void joinChannel(c.id)}
-                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-                        active
-                          ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40'
-                          : 'text-slate-300 hover:bg-white/5'
-                      }`}
+                <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
+                  {/* Canais fixos à esquerda */}
+                  <div className="flex min-h-0 flex-col overflow-y-auto rounded-xl bg-white/5 p-1.5">
+                    <p className="px-1 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Canais
+                    </p>
+                    {DEFAULT_CHANNELS.map((c) => {
+                      const active = inCall && channel === c.id
+                      const count = Math.min(
+                        onlineMembers.filter((m) => m.channel === c.id).length,
+                        10
+                      )
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => void joinChannel(c.id)}
+                          className={`mb-1 flex items-center gap-1.5 rounded-lg px-2 py-2 text-left text-xs transition ${
+                            active
+                              ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40'
+                              : 'text-slate-300 hover:bg-white/5'
+                          }`}
+                        >
+                          <span>{active ? '🔊' : '🔈'}</span>
+                          <span className="flex-1 truncate font-semibold">{c.label}</span>
+                          <span
+                            title={`${count}/10 online`}
+                            className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-emerald-300 ring-1 ring-emerald-400/30"
+                          >
+                            OK
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {/* Salas públicas criadas à direita */}
+                  <div className="flex min-h-0 flex-col overflow-y-auto rounded-xl bg-white/5 p-1.5">
+                    <p className="px-1 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Salas
+                    </p>
+                    {rooms.length === 0 ? (
+                      <p className="px-1 py-2 text-center text-[11px] leading-snug text-slate-500">
+                        Nenhuma sala ainda. Crie uma na aba ➕.
+                      </p>
+                    ) : (
+                      rooms.map((room) => {
+                        const active = inCall && channel === room.id
+                        const count = Math.min(
+                          onlineMembers.filter((m) => m.channel === room.id).length,
+                          10
+                        )
+                        return (
+                          <button
+                            key={room.id}
+                            onClick={() => void openRoom(room)}
+                            className={`mb-1 rounded-lg px-2 py-2 text-left text-xs transition ${
+                              active
+                                ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40'
+                                : 'text-slate-300 hover:bg-white/5'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <span>🌐</span>
+                              <span className="flex-1 truncate font-semibold">{room.name}</span>
+                            </span>
+                            <span className="mt-0.5 flex items-center justify-between gap-1">
+                              <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-slate-400">
+                                {room.ownerPhoto && (
+                                  <img
+                                    src={room.ownerPhoto}
+                                    alt=""
+                                    className="h-3.5 w-3.5 shrink-0 rounded-full object-cover"
+                                  />
+                                )}
+                                <span className="truncate">{room.ownerName ?? 'Usuário'}</span>
+                              </span>
+                              <span
+                                title={`${count}/10 online`}
+                                className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-emerald-300 ring-1 ring-emerald-400/30"
+                              >
+                                OK
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : inicioView === 'criar' ? (
+              <div className="mt-3 flex min-h-0 flex-1 flex-col">
+                {!authUser ? (
+                  <div className="flex flex-1 flex-col items-center justify-center text-center">
+                    <span className="text-4xl">🔒</span>
+                    <p className="mt-3 max-w-[16rem] text-sm text-slate-400">
+                      Faça login com o Google para criar suas próprias salas.
+                    </p>
+                    <a
+                      href="/login"
+                      className="mt-4 rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-400"
                     >
-                      <span className="text-base">{active ? '🔊' : '🔈'}</span>
-                      <span className="flex-1 truncate">{c.label}</span>
-                      <span className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-300">
-                        {count}/10
+                      Entrar com o Google
+                    </a>
+                  </div>
+                ) : (
+                  <div className="flex flex-1 flex-col">
+                    <p className="mb-2 text-center text-xs font-medium text-slate-400">
+                      Dê um nome para sua sala
+                    </p>
+                    <input
+                      value={newRoomName}
+                      onChange={(e) => setNewRoomName(e.target.value)}
+                      maxLength={30}
+                      placeholder="Ex.: Festa da galera"
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/20"
+                    />
+                    <button
+                      onClick={() => setNewRoomPrivate((v) => !v)}
+                      className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
+                    >
+                      <span>
+                        <span className="block text-sm font-semibold">
+                          {newRoomPrivate ? 'Privada 🔒' : 'Pública 🌐'}
+                        </span>
+                        <span className="block text-xs text-slate-400">
+                          {newRoomPrivate
+                            ? 'Só você pode entrar'
+                            : 'Qualquer pessoa pode entrar'}
+                        </span>
                       </span>
+                      <span className="text-lg">{newRoomPrivate ? '🔒' : '🌐'}</span>
                     </button>
-                  )
-                })}
+                    {newRoomPrivate && (
+                      <>
+                        <input
+                          value={newRoomPassword}
+                          onChange={(e) => setNewRoomPassword(e.target.value)}
+                          maxLength={20}
+                          type="password"
+                          placeholder="Senha (opcional)"
+                          className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-amber-400/60 focus:ring-2 focus:ring-amber-500/20"
+                        />
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          🔑 Deixe em branco para entrar sem senha. Com senha, só convidados ou
+                          quem souber a senha entram.
+                        </p>
+                      </>
+                    )}
+                    <button
+                      onClick={() => void createRoom()}
+                      disabled={creatingRoom || !newRoomName.trim()}
+                      className="mt-3 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 transition hover:bg-emerald-400 disabled:opacity-40"
+                    >
+                      {creatingRoom ? 'Criando...' : 'Criar sala'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : inicioView === 'privadas' ? (
+              <div className="mt-3 flex min-h-0 flex-1 flex-col">
+                <p className="mb-2 text-center text-xs font-medium text-slate-400">
+                  Suas salas privadas, protegidas por senha.
+                </p>
+                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+                  {!authUser ? (
+                    <div className="flex flex-1 flex-col items-center justify-center text-center">
+                      <span className="text-4xl">🔒</span>
+                      <p className="mt-3 text-sm text-slate-400">
+                        Faça login com o Google para ver suas salas.
+                      </p>
+                    </div>
+                  ) : myRooms.filter((r) => r.isPrivate).length === 0 ? (
+                    <div className="flex flex-col items-center justify-center pt-10 text-center">
+                      <span className="text-4xl">📁</span>
+                      <p className="mt-3 text-sm text-slate-400">
+                        Você ainda não tem salas privadas.
+                      </p>
+                      <button
+                        onClick={() => setInicioView('criar')}
+                        className="mt-3 rounded-lg bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
+                      >
+                        Criar sala
+                      </button>
+                    </div>
+                  ) : (
+                    myRooms
+                      .filter((r) => r.isPrivate)
+                      .map((room) => {
+                        const active = inCall && channel === room.id
+                        const count = Math.min(
+                          onlineMembers.filter((m) => m.channel === room.id).length,
+                          10
+                        )
+                        return (
+                          <div
+                            key={room.id}
+                            className={`flex items-center gap-2 rounded-lg px-3 py-2 transition ${
+                              active
+                                ? 'bg-indigo-500/20 ring-1 ring-indigo-400/40'
+                                : 'bg-white/5 hover:bg-white/10'
+                            }`}
+                          >
+                            <span className="text-base">🔒</span>
+                            <button
+                              onClick={() => void openRoom(room)}
+                              className="flex-1 truncate text-left"
+                            >
+                              <span className="block truncate text-sm font-semibold text-slate-200">
+                                {room.name}
+                              </span>
+                              <span className="block text-[10px] text-slate-400">
+                                {room.hasPassword ? '🔑 Senha necessária' : 'Sem senha'} · {count}/10
+                              </span>
+                            </button>
+                            <span
+                              className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-emerald-300 ring-1 ring-emerald-400/30"
+                            >
+                              OK
+                            </span>
+                          </div>
+                        )
+                      })
+                  )}
+                </div>
+              </div>
+            ) : inicioView === 'minhas' ? (
+              <div className="mt-3 flex min-h-0 flex-1 flex-col">
+                <p className="mb-2 text-center text-xs font-medium text-slate-400">
+                  Suas salas, com convite e gerenciamento.
+                </p>
+                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+                  {!authUser ? (
+                    <div className="flex flex-1 flex-col items-center justify-center text-center">
+                      <span className="text-4xl">🔒</span>
+                      <p className="mt-3 text-sm text-slate-400">
+                        Faça login com o Google para ver suas salas.
+                      </p>
+                    </div>
+                  ) : myRooms.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center pt-10 text-center">
+                      <span className="text-4xl">📁</span>
+                      <p className="mt-3 text-sm text-slate-400">
+                        Você ainda não criou nenhuma sala.
+                      </p>
+                      <button
+                        onClick={() => setInicioView('criar')}
+                        className="mt-3 rounded-lg bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
+                      >
+                        Criar sala
+                      </button>
+                    </div>
+                  ) : (
+                    myRooms.map((room) => {
+                      const active = inCall && channel === room.id
+                      const count = Math.min(
+                        onlineMembers.filter((m) => m.channel === room.id).length,
+                        10
+                      )
+                      return (
+                        <div
+                          key={room.id}
+                          className={`flex items-center gap-2 rounded-lg px-3 py-2 transition ${
+                            active
+                              ? 'bg-indigo-500/20 ring-1 ring-indigo-400/40'
+                              : 'bg-white/5 hover:bg-white/10'
+                          }`}
+                        >
+                          <span className="text-base">{room.isPrivate ? '🔒' : '🌐'}</span>
+                          <button
+                            onClick={() => void openRoom(room)}
+                            className="flex-1 truncate text-left"
+                          >
+                            <span className="block truncate text-sm font-semibold text-slate-200">
+                              {room.name}
+                            </span>
+                            <span className="block text-[10px] text-slate-400">
+                              {room.isPrivate ? 'Privada' : 'Pública'} · {count}/10
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => void openInvite(room)}
+                            aria-label="Convidar amigos"
+                            title="Convidar amigos"
+                            className="shrink-0 rounded-md bg-indigo-500/20 px-2 py-1 text-xs text-indigo-200 transition hover:bg-indigo-500/30"
+                          >
+                            📨
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Excluir a sala "${room.name}"?`)) {
+                                void deleteRoom(room.id)
+                              }
+                            }}
+                            aria-label="Excluir sala"
+                            className="shrink-0 rounded-md bg-white/5 px-2 py-1 text-xs text-rose-300 transition hover:bg-rose-500/20"
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
               </div>
             ) : (
@@ -2156,7 +2547,7 @@ export function ShareRoom() {
       <aside
         className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-4 lg:col-start-1 lg:row-start-2 lg:min-h-0 ${
           mobileTab === 'chat' ? 'flex' : 'hidden'
-        } ${inCall ? 'lg:flex' : 'lg:hidden'}`}
+        } lg:flex`}
       >
         {!inCall ? (
           <div className="flex flex-1 flex-col items-center justify-center text-center">
@@ -2166,7 +2557,7 @@ export function ShareRoom() {
           </div>
         ) : (
           <>
-            <h3 className="text-sm font-semibold">{t('chatTitle')} · {channelLabel(channel)}</h3>
+            <h3 className="text-sm font-semibold">{t('chatTitle')} · {roomLabelsRef.current[channel] ?? channelLabel(channel)}</h3>
             <div className="relative mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {chat.map((m) => (
                 <div key={m.id} className="share-panel-soft group relative rounded-lg px-3 py-2">
@@ -2792,13 +3183,27 @@ export function ShareRoom() {
               {/* Amigos: convites, código e lista */}
               {configPane === 'amigos' && (
                 authUser ? (
-                  <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
-                    <FriendsPanel
-                      onOpenProfile={(p) =>
-                        setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined, bio: p.bio ?? undefined, cover: p.cover ?? undefined })
-                      }
-                    />
-                  </section>
+                  <>
+                    <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
+                      <FriendsPanel
+                        onOpenProfile={(p) =>
+                          setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined, bio: p.bio ?? undefined, cover: p.cover ?? undefined })
+                        }
+                      />
+                    </section>
+                    {/* Convites de sala: entrar em salas de amigos sem senha */}
+                    <section className="share-panel-soft rounded-xl p-3">
+                      <h4 className="mb-2 text-sm font-bold">📨 Convites de sala</h4>
+                      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/5 p-4 text-center">
+                        <span className="text-2xl">💌</span>
+                        <p className="text-xs text-slate-400">Você ainda não tem convites de sala.</p>
+                        <p className="max-w-xs text-[10px] leading-snug text-slate-500">
+                          Quando um amigo te convidar, a sala aparecerá aqui e você poderá entrar
+                          sem precisar de senha.
+                        </p>
+                      </div>
+                    </section>
+                  </>
                 ) : (
                   <section className="share-panel-soft flex flex-col items-center gap-3 rounded-xl p-6 text-center">
                     <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 text-3xl">
@@ -3245,6 +3650,109 @@ export function ShareRoom() {
                 {t('notifyPromptLater')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up de senha para entrar em sala privada */}
+      {joinPasswordOpen && joinPasswordRoom && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4">
+          <div className="share-panel w-full max-w-sm rounded-2xl p-5">
+            <div className="mb-1 flex items-center gap-2 text-lg font-bold">
+              🔒 {joinPasswordRoom.name}
+            </div>
+            <p className="mb-4 text-sm text-slate-300">
+              Esta sala é privada e exige senha. Digite para entrar.
+            </p>
+            <input
+              autoFocus
+              type="password"
+              value={joinPasswordValue}
+              onChange={(e) => setJoinPasswordValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitJoinPassword()
+              }}
+              placeholder="Senha da sala"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
+            />
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                onClick={() => void submitJoinPassword()}
+                disabled={joinPasswordBusy}
+                className="w-full rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 transition hover:bg-emerald-400 disabled:opacity-40"
+              >
+                {joinPasswordBusy ? 'Entrando...' : 'Entrar na sala'}
+              </button>
+              <button
+                onClick={() => {
+                  setJoinPasswordOpen(false)
+                  setJoinPasswordRoom(null)
+                }}
+                className="w-full rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-white/15"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up de convite de amigos */}
+      {inviteRoom && (
+        <div
+          className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setInviteRoom(null)}
+        >
+          <div
+            className="share-panel w-full max-w-sm rounded-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-1 flex items-center gap-2 text-lg font-bold">
+              📨 Convidar para &quot;{inviteRoom.name}&quot;
+            </div>
+            <p className="mb-4 text-sm text-slate-300">
+              Escolha um amigo para convidar para esta sala.
+            </p>
+            <div className="max-h-64 space-y-1.5 overflow-y-auto">
+              {inviteLoading ? (
+                <p className="py-4 text-center text-sm text-slate-400">Carregando amigos...</p>
+              ) : inviteFriends.length === 0 ? (
+                <p className="py-4 text-center text-sm text-slate-400">
+                  Você ainda não tem amigos para convidar.
+                </p>
+              ) : (
+                inviteFriends.map((f) => (
+                  <div key={f.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
+                    {f.photo ? (
+                      <img src={f.photo} alt="" className="h-8 w-8 rounded-full object-cover" />
+                    ) : (
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-500/30 text-sm font-bold">
+                        {(f.displayName || '?')[0]}
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-200">{f.displayName}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {f.online ? '● Online' : 'Offline'}
+                      </p>
+                    </div>
+                    <button
+                      disabled
+                      title="Convite ainda não disponível"
+                      className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30"
+                    >
+                      Convidar
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <button
+              onClick={() => setInviteRoom(null)}
+              className="mt-4 w-full rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-white/15"
+            >
+              Fechar
+            </button>
           </div>
         </div>
       )}

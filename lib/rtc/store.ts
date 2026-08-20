@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   MailboxMessage,
   Member,
+  Room,
   SignalKind,
 } from './types'
 import { ensureDb, getSql } from '@/db'
@@ -122,13 +123,21 @@ async function pushExistingScreenKinds(to: string, channel: ChannelId): Promise<
   }
 }
 
-export function isChannel(channel: string): boolean {
-  return ['geral', 'sala-1', 'sala-2', 'sala-3'].includes(channel)
+const FIXED_CHANNELS = ['geral', 'sala-1', 'sala-2', 'sala-3']
+
+// Valida um canal: pode ser um canal fixo OU uma sala personalizada cadastrada.
+export async function isValidChannel(channel: string): Promise<boolean> {
+  if (FIXED_CHANNELS.includes(channel)) return true
+  await ensureDb()
+  const rows = await getSql()<{ id: string }[]>`SELECT id FROM rooms WHERE id = ${channel}`
+  return rows.length > 0
 }
 
-// Salas públicas (com limite de pessoas). Salas privadas futuras não usam.
-export function isPublicChannel(channel: string): boolean {
-  return isChannel(channel)
+// Salas públicas: canais fixos e salas personalizadas marcadas como públicas.
+export async function isPublicChannel(channel: string): Promise<boolean> {
+  if (FIXED_CHANNELS.includes(channel)) return true
+  const room = await roomById(channel)
+  return room ? !room.isPrivate : false
 }
 
 // Apaga mensagens de chat cujo prazo de validade expirou.
@@ -233,6 +242,116 @@ export async function membersInChannel(channel: ChannelId): Promise<Member[]> {
   return (await channelRows(channel)).map(toMember)
 }
 
+type RoomRow = {
+  id: string
+  name: string
+  is_private: boolean
+  owner_id: string
+  password: string | null
+  created_at: string | number
+  owner_name: string | null
+  owner_photo: string | null
+}
+
+function toRoom(r: RoomRow): Room {
+  return {
+    id: r.id,
+    name: r.name,
+    isPrivate: r.is_private,
+    ownerId: r.owner_id,
+    createdAt: Number(r.created_at),
+    hasPassword: Boolean(r.password),
+    ownerName: r.owner_name ?? undefined,
+    ownerPhoto: r.owner_photo ?? undefined,
+  }
+}
+
+// Interno: retorna a linha com a senha (nunca expõe para o cliente).
+async function roomRowWithPassword(id: string): Promise<RoomRow | undefined> {
+  await ensureDb()
+  const rows = await getSql()<RoomRow[]>`
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at,
+           u.display_name AS owner_name, u.photo AS owner_photo
+    FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
+    WHERE r.id = ${id}
+  `
+  return rows[0]
+}
+
+export async function roomById(id: string): Promise<Room | undefined> {
+  const row = await roomRowWithPassword(id)
+  return row ? toRoom(row) : undefined
+}
+
+export async function listPublicRooms(): Promise<Room[]> {
+  await ensureDb()
+  const rows = await getSql()<RoomRow[]>`
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at,
+           u.display_name AS owner_name, u.photo AS owner_photo
+    FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
+    WHERE NOT r.is_private ORDER BY r.created_at DESC
+  `
+  return rows.map(toRoom)
+}
+
+export async function listMyRooms(userId: string): Promise<Room[]> {
+  await ensureDb()
+  const rows = await getSql()<RoomRow[]>`
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at,
+           u.display_name AS owner_name, u.photo AS owner_photo
+    FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
+    WHERE r.owner_id = ${userId} ORDER BY r.created_at DESC
+  `
+  return rows.map(toRoom)
+}
+
+export async function createRoom(
+  name: string,
+  isPrivate: boolean,
+  ownerId: string,
+  password?: string
+): Promise<Room> {
+  await ensureDb()
+  const id = 'room_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  const now = nowMs()
+  const pwd = isPrivate ? (password?.trim() || null) : null
+  await getSql()`
+    INSERT INTO rooms (id, name, is_private, owner_id, password, created_at)
+    VALUES (${id}, ${name}, ${isPrivate}, ${ownerId}, ${pwd}, ${now})
+  `
+  return {
+    id,
+    name,
+    isPrivate,
+    ownerId,
+    createdAt: now,
+    hasPassword: Boolean(pwd),
+  }
+}
+
+// Exclui uma sala (somente o dono). Quem estiver nela volta para o saguão.
+export async function deleteRoom(roomId: string, ownerId: string): Promise<boolean> {
+  await ensureDb()
+  const members = await getSql()<{ client_id: string }[]>`
+    SELECT client_id FROM rtc_clients WHERE channel = ${roomId} AND left_at IS NULL
+  `
+  for (const m of members) {
+    await notifyChannel(
+      roomId as ChannelId,
+      () => ({ type: 'peer-left', clientId: m.client_id }),
+      m.client_id
+    )
+    await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${m.client_id}`
+    await getSql()`
+      UPDATE rtc_clients SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}
+      WHERE client_id = ${m.client_id}
+    `
+  }
+  await getSql()`DELETE FROM rtc_chat WHERE channel = ${roomId}`
+  const res = await getSql()`DELETE FROM rooms WHERE id = ${roomId} AND owner_id = ${ownerId}`
+  return (res.count ?? 0) > 0
+}
+
 export async function getMember(clientId: string): Promise<Member | undefined> {
   await ensureDb()
   const row = await getClientRow(clientId)
@@ -276,14 +395,31 @@ export async function joinChannel(
   cover: string | undefined,
   channel: ChannelId,
   userId: string | null,
-  ip: string | null = null
+  ip: string | null = null,
+  password?: string
 ): Promise<{ ok: true; channel: ChannelId; members: Member[] }> {
   await ensureDb()
   const now = nowMs()
   const previous = await getClientRow(clientId)
 
+  // Salas personalizadas: precisam existir e, se forem privadas, exigem senha
+  // (ou, sem senha definida, só o dono entra). Convites futuros burlam a senha.
+  if (!FIXED_CHANNELS.includes(channel)) {
+    const row = await roomRowWithPassword(channel)
+    if (!row) throw new AppError('Sala não encontrada.', 404, 'ROOM_NOT_FOUND')
+    if (row.is_private) {
+      if (!row.password) {
+        if (row.owner_id !== userId) {
+          throw new AppError('Esta sala é privada e só o dono pode entrar.', 403, 'ROOM_PRIVATE')
+        }
+      } else if (password?.trim() !== row.password) {
+        throw new AppError('Senha incorreta. Verifique e tente de novo.', 403, 'ROOM_PASSWORD')
+      }
+    }
+  }
+
   // Limite por sala pública (para não sobrecarregar a sala de voz).
-  if (isPublicChannel(channel) && previous?.channel !== channel) {
+  if ((await isPublicChannel(channel)) && previous?.channel !== channel) {
     const active = await getSql()<{ c: string | number }[]>`
       SELECT COUNT(*) AS c FROM rtc_clients
       WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${now - ANON_OFFLINE_MS}
@@ -572,7 +708,7 @@ async function maybeKickSolo(clientId: string): Promise<void> {
   if (!stored || stored.left_at != null) return
   // Presença no lobby (quem só abriu o site e não entrou em sala)
   // não deve ser "expulso" por ficar sozinho — isso só vale para salas.
-  if (!isPublicChannel(stored.channel)) return
+  if (!(await isPublicChannel(stored.channel))) return
   const rows = await channelRows(stored.channel as ChannelId)
   if (rows.length !== 1) return
   const lone = rows[0]

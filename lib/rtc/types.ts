@@ -13,6 +13,17 @@ export type Member = {
   userId?: string
 }
 
+export type Room = {
+  id: string
+  name: string
+  isPrivate: boolean
+  ownerId: string
+  createdAt: number
+  hasPassword: boolean
+  ownerName?: string
+  ownerPhoto?: string
+}
+
 export type SignalKind = 'offer' | 'answer' | 'ice'
 
 export type Profile = {
