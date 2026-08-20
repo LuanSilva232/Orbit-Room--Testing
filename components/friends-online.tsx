@@ -95,22 +95,29 @@ export function FriendsOnline({ onOpenProfile }: { onOpenProfile: OpenProfileFn 
         ) : (
           <div className="mt-1 space-y-1">
             {online.map((f) => (
-              <div key={f.id} className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
+              <div key={f.id} className="group flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
                 <button
                   onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  className="relative shrink-0"
                   title="Ver perfil"
+                  aria-label={`Ver perfil de ${f.name}`}
                 >
-                  <div className="relative shrink-0">
-                    <Avatar name={f.name} photo={f.photo} size={32} />
-                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-emerald-400" />
-                  </div>
-                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                  {f.channelId && (
-                    <span translate="no" className="shrink-0 rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">
-                      {f.channelId}
-                    </span>
-                  )}
+                  <Avatar name={f.name} photo={f.photo} size={32} />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-emerald-400" />
+                </button>
+                <span className="min-w-0 flex-1 truncate text-slate-200">{f.name}</span>
+                {f.channelId && (
+                  <span translate="no" className="shrink-0 rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">
+                    {f.channelId}
+                  </span>
+                )}
+                <button
+                  onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                  className="shrink-0 px-1.5 text-slate-500 transition hover:text-white"
+                  title="Ver perfil"
+                  aria-label={`Ver perfil de ${f.name}`}
+                >
+                  →
                 </button>
                 <FriendMoreMenu
                   userId={f.id}
@@ -132,17 +139,24 @@ export function FriendsOnline({ onOpenProfile }: { onOpenProfile: OpenProfileFn 
         ) : (
           <ul className="mt-1 space-y-0.5">
             {offline.map((f) => (
-              <li key={f.id} className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm text-slate-400 hover:bg-white/5">
+              <li key={f.id} className="group flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm text-slate-400 hover:bg-white/5">
                 <button
                   onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  className="relative shrink-0"
                   title="Ver perfil"
+                  aria-label={`Ver perfil de ${f.name}`}
                 >
-                  <div className="relative shrink-0">
-                    <Avatar name={f.name} photo={f.photo} size={28} />
-                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-slate-500" />
-                  </div>
-                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                  <Avatar name={f.name} photo={f.photo} size={28} />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-slate-500" />
+                </button>
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                <button
+                  onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                  className="shrink-0 px-1.5 text-slate-500 transition hover:text-white"
+                  title="Ver perfil"
+                  aria-label={`Ver perfil de ${f.name}`}
+                >
+                  →
                 </button>
                 <FriendMoreMenu
                   userId={f.id}

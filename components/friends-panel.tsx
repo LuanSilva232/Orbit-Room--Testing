@@ -313,31 +313,38 @@ export function FriendsPanel({ onOpenProfile }: { onOpenProfile: OpenProfileFn }
               return (
                 <div
                   key={f.id}
-                  className="flex items-center gap-2 rounded-2xl border border-white/5 bg-white/5 px-3 py-2.5 transition hover:bg-white/10"
+                  className="group flex items-center gap-2 rounded-2xl border border-white/5 bg-white/5 px-3 py-2.5 transition hover:bg-white/10"
                 >
                   <button
                     onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    className="relative shrink-0"
                     title="Ver perfil"
+                    aria-label={`Ver perfil de ${f.name}`}
                   >
-                    <div className="relative shrink-0">
-                      <div className="rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-0.5">
-                        <div className="rounded-full bg-slate-900 p-0.5">
-                          <Avatar name={f.name} photo={f.photo} size={38} />
-                        </div>
+                    <div className="rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-0.5 transition group-hover:brightness-110">
+                      <div className="rounded-full bg-slate-900 p-0.5">
+                        <Avatar name={f.name} photo={f.photo} size={38} />
                       </div>
-                      <span
-                        className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-slate-900 ${
-                          f.online ? 'bg-emerald-400' : 'bg-slate-600'
-                        }`}
-                      />
                     </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">{f.name}</p>
-                      <p className={`text-[11px] ${f.online ? 'text-emerald-300' : 'text-slate-500'}`}>
-                        {f.online ? '● Online' : 'Offline'}
-                      </p>
-                    </div>
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-slate-900 ${
+                        f.online ? 'bg-emerald-400' : 'bg-slate-600'
+                      }`}
+                    />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-white">{f.name}</p>
+                    <p className={`text-[11px] ${f.online ? 'text-emerald-300' : 'text-slate-500'}`}>
+                      {f.online ? '● Online' : 'Offline'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                    className="shrink-0 rounded-lg px-2 py-1.5 text-slate-500 transition hover:bg-white/10 hover:text-white"
+                    title="Ver perfil"
+                    aria-label={`Ver perfil de ${f.name}`}
+                  >
+                    →
                   </button>
                   <button
                     onClick={() => removeFriend(f.id, f.name)}

@@ -20,8 +20,9 @@ const socialPost = (body: Record<string, unknown>) =>
 
 type Relation = { isFriend: boolean; isFollowing: boolean; isSelf: boolean }
 type Counts = { friendsCount: number; followersCount: number; followingCount: number }
+type TabId = 'friends' | 'followers' | 'following'
 
-/** Modal de perfil de outro usuário, com ⋮ contextual (adicionar/seguir) e listas sociais (só para amigos). */
+/** Modal de perfil de outro usuário, com botão de amizade e listas sociais (só para amigos). */
 export function ProfileViewModal({
   profile,
   currentUserId,
@@ -35,11 +36,13 @@ export function ProfileViewModal({
 }) {
   const userId = profile.userId
   const [relation, setRelation] = useState<Relation>({ isFriend: false, isFollowing: false, isSelf: false })
+  const [requestStatus, setRequestStatus] = useState<'sent' | 'received' | null>(null)
   const [counts, setCounts] = useState<Counts | null>(null)
   const [lists, setLists] = useState<Lists>({ friends: [], followers: [], following: [] })
   const [online, setOnline] = useState<boolean | null>(null)
-  const [tab, setTab] = useState<'friends' | 'followers' | 'following'>('friends')
+  const [tab, setTab] = useState<TabId | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const load = () => {
@@ -48,6 +51,8 @@ export function ProfileViewModal({
       .then((r) => r.json())
       .then((d) => {
         if (d?.relation) setRelation(d.relation)
+        if (typeof d?.requestStatus === 'string') setRequestStatus(d.requestStatus)
+        else setRequestStatus(null)
         if (d && typeof d.friendsCount === 'number') {
           setCounts({ friendsCount: d.friendsCount, followersCount: d.followersCount, followingCount: d.followingCount })
         }
@@ -63,7 +68,8 @@ export function ProfileViewModal({
 
   useEffect(() => {
     setMenuOpen(false)
-    setTab('friends')
+    setConfirmRemove(false)
+    setTab(null)
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, currentUserId])
@@ -88,9 +94,9 @@ export function ProfileViewModal({
     </div>
   )
 
-  const listTab = (id: 'friends' | 'followers' | 'following', label: string, count: number) => (
+  const listTab = (id: TabId, label: string, count: number) => (
     <button
-      onClick={() => setTab(id)}
+      onClick={() => setTab((v) => (v === id ? null : id))}
       className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors ${
         tab === id ? 'bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'
       }`}
@@ -134,7 +140,7 @@ export function ProfileViewModal({
         <div className="absolute inset-x-0 top-0 h-28 rounded-t-2xl bg-gradient-to-br from-indigo-500/45 via-purple-500/25 to-fuchsia-500/35" />
       )}
 
-      {/* ⋮ no canto superior direito */}
+      {/* ⋮ no canto superior direito (seguir/parar de seguir) */}
       {canAct && (
         <div className="absolute right-4 top-4 z-10">
           <button
@@ -145,24 +151,7 @@ export function ProfileViewModal({
             ⋯
           </button>
           {menuOpen && (
-            <div className="share-panel absolute right-0 top-11 flex w-56 flex-col overflow-hidden rounded-xl p-1 shadow-2xl">
-              {!relation.isFriend ? (
-                <button
-                  disabled={busy}
-                  onClick={() => void run('send-request', { toUserId: userId }, 'Convite enviado!')}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-emerald-300 hover:bg-white/5 disabled:opacity-50"
-                >
-                  🤝 Adicionar amigo
-                </button>
-              ) : (
-                <button
-                  disabled={busy}
-                  onClick={() => void run('remove-friend', { userId }, 'Amizade encerrada.')}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-rose-300 hover:bg-white/5 disabled:opacity-50"
-                >
-                  🚫 Deixar de ser amigo
-                </button>
-              )}
+            <div className="share-panel absolute right-0 top-11 flex w-52 flex-col overflow-hidden rounded-xl p-1 shadow-2xl">
               {relation.isFollowing ? (
                 <button
                   disabled={busy}
@@ -201,6 +190,35 @@ export function ProfileViewModal({
           {online && <span className="text-emerald-300">· Online</span>}
         </div>
 
+        {/* Botão de amizade: adicionar → pendente → remover (com confirmação) */}
+        {canAct && (
+          <div className="mt-3 flex w-full gap-2">
+            {relation.isFriend ? (
+              <button
+                onClick={() => setConfirmRemove(true)}
+                className="flex-1 rounded-xl bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-300 ring-1 ring-rose-400/40 transition hover:bg-rose-500/40 hover:text-white"
+              >
+                🚫 Remover amizade
+              </button>
+            ) : requestStatus ? (
+              <button
+                disabled
+                className="flex-1 cursor-not-allowed rounded-xl bg-slate-500/20 px-3 py-2 text-sm font-semibold text-slate-400 ring-1 ring-white/10"
+              >
+                ⏳ Pendente
+              </button>
+            ) : (
+              <button
+                disabled={busy}
+                onClick={() => void run('send-request', { toUserId: userId }, 'Convite enviado!')}
+                className="flex-1 rounded-xl bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-400/40 transition hover:bg-emerald-500/40 hover:text-white disabled:opacity-50"
+              >
+                🤝 Adicionar amigo
+              </button>
+            )}
+          </div>
+        )}
+
         {counts && (
           <div className="mt-4 flex w-full gap-2">
             {countBox('Amigos', counts.friendsCount)}
@@ -221,6 +239,7 @@ export function ProfileViewModal({
               {tab === 'friends' && renderList(lists.friends)}
               {tab === 'followers' && renderList(lists.followers)}
               {tab === 'following' && renderList(lists.following)}
+              {!tab && <p className="py-3 text-center text-xs text-slate-500">Toque em uma aba acima para ver as pessoas.</p>}
             </div>
           </div>
         ) : (
@@ -246,6 +265,40 @@ export function ProfileViewModal({
           Fechar
         </button>
       </div>
+
+      {/* Confirmação antes de remover a amizade */}
+      {confirmRemove && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4" onClick={() => setConfirmRemove(false)}>
+          <div
+            className="w-full max-w-xs rounded-2xl border border-white/10 bg-slate-900 p-5 text-center shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-lg font-bold">Remover amizade</p>
+            <p className="mt-2 text-sm text-slate-400">
+              Tem certeza que deseja remover <span className="font-semibold text-white">{profile.name}</span> da sua lista de
+              amigos?
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => setConfirmRemove(false)}
+                className="flex-1 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-white/20"
+              >
+                Cancelar
+              </button>
+              <button
+                disabled={busy}
+                onClick={() => {
+                  setConfirmRemove(false)
+                  void run('remove-friend', { userId }, 'Amizade encerrada.')
+                }}
+                className="flex-1 rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-400 disabled:opacity-50"
+              >
+                Remover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Modal>
   )
 }

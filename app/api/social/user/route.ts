@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
   `
   if (!u) return NextResponse.json({ ok: false, error: 'NOT_FOUND' }, { status: 404 })
 
+  const [presence] = await sql`SELECT client_id FROM rtc_clients WHERE user_id = ${targetId} LIMIT 1`
+
   const friends = await sql`
     SELECT u2.id, u2.display_name, u2.photo, r.channel AS online_channel, r.client_id
     FROM social_friends sf
@@ -54,6 +56,18 @@ export async function GET(req: NextRequest) {
     relation.isSelf = true
   }
 
+  // Estado do convite de amizade entre quem vê e o dono do perfil.
+  let requestStatus: 'sent' | 'received' | null = null
+  if (user && user.id !== targetId) {
+    const [req] = await sql<{ from_id: string }[]>`
+      SELECT from_id FROM social_requests
+      WHERE status = 'pending'
+        AND ((from_id = ${user.id} AND to_id = ${targetId}) OR (from_id = ${targetId} AND to_id = ${user.id}))
+      LIMIT 1
+    `
+    if (req) requestStatus = req.from_id === user.id ? 'sent' : 'received'
+  }
+
   // Privacidade: só amigos (ou o próprio perfil) enxergam as LISTAS de amigos/
   // seguidores/seguindo. Para os demais, apenas os números ficam visíveis.
   const canSeeLists = relation.isSelf || relation.isFriend
@@ -68,8 +82,10 @@ export async function GET(req: NextRequest) {
       photo: u.photo ?? null,
       cover: u.cover ?? null,
       bio: u.bio ?? null,
+      online: !!presence?.client_id,
     },
     relation,
+    requestStatus,
     friendsCount: friends.length,
     followersCount: followers.length,
     followingCount: following.length,

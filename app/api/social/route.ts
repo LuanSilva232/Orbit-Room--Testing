@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
     await sql`
       INSERT INTO social_requests (id, from_id, to_id, status, created_at)
       VALUES (${'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)}, ${user.id}, ${tid}, 'pending', ${Date.now()})
-      ON CONFLICT (from_id, to_id) DO NOTHING
+      ON CONFLICT (from_id, to_id) DO UPDATE SET status = 'pending', created_at = ${Date.now()}
     `
     return NextResponse.json({ ok: true, message: 'Convite enviado!' })
   }
