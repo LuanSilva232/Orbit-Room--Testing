@@ -1885,7 +1885,7 @@ export function ShareRoom() {
 
       {/* Sidebar */}
       <aside
-        className={`share-panel flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl p-3 lg:col-start-1 lg:row-start-1 ${
+        className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-3 lg:col-start-1 lg:row-start-1 lg:overflow-y-auto ${
           !inCall ? 'lg:row-span-2' : ''
         } ${mobileTab === 'inicio' ? 'flex' : 'hidden'} lg:flex`}
       >
@@ -2002,7 +2002,7 @@ export function ShareRoom() {
             {inicioView === 'publicas' ? (
               <div className="mt-3 flex min-h-0 flex-1 flex-col">
                 <p className="mb-2 text-center text-xs font-medium text-slate-400">{t('subtitle')}</p>
-                <div className="space-y-1.5 overflow-y-auto">
+                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
                 {DEFAULT_CHANNELS.map((c) => {
                   const active = inCall && channel === c.id
                   const count = Math.min(

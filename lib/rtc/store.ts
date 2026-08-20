@@ -263,7 +263,7 @@ export async function registerPresence(
   } else {
     await getSql()`
       INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip)
-      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, 'geral', ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, 'lobby', ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
     `
   }
 }
@@ -390,7 +390,7 @@ export async function leaveChannel(clientId: string): Promise<void> {
   // Não marca como offline — quem fechar a página fica offline sozinho (last_seen).
   await getSql()`
     UPDATE rtc_clients
-    SET channel = 'geral', left_at = NULL, last_seen = ${nowMs()}
+    SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}
     WHERE client_id = ${clientId}
   `
   // Se sobrar só 1 pessoa no canal, inicia a contagem para sair do canal (AFK).
@@ -570,9 +570,9 @@ async function maybeKickSolo(clientId: string): Promise<void> {
   const stored = await getClientRow(clientId)
   // Sai cedo se não existir ou se já marcou saída (left_at preenchido).
   if (!stored || stored.left_at != null) return
-  // Presença no lobby 'geral' (quem só abriu o site e não entrou em sala)
+  // Presença no lobby (quem só abriu o site e não entrou em sala)
   // não deve ser "expulso" por ficar sozinho — isso só vale para salas.
-  if (stored.channel === 'geral') return
+  if (!isPublicChannel(stored.channel)) return
   const rows = await channelRows(stored.channel as ChannelId)
   if (rows.length !== 1) return
   const lone = rows[0]
@@ -584,7 +584,7 @@ async function maybeKickSolo(clientId: string): Promise<void> {
   await notifyChannel(stored.channel as ChannelId, () => ({ type: 'peer-left', clientId }), clientId)
   await getSql()`
     UPDATE rtc_clients
-    SET channel = 'geral', left_at = NULL, last_seen = ${nowMs()}, single_since = NULL
+    SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}, single_since = NULL
     WHERE client_id = ${clientId}
   `
   await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${clientId}`

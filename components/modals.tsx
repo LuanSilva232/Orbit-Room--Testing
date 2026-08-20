@@ -300,6 +300,18 @@ export function ProfileEditModal({
         <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-br from-indigo-500/45 via-purple-500/25 to-fuchsia-500/35" />
       )}
 
+      {/* Fechar sempre acessível no mobile */}
+      <button
+        type="button"
+        onClick={onClose}
+        disabled={busy}
+        aria-label="Fechar"
+        className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-slate-900/70 text-lg text-slate-200 ring-1 ring-white/20 backdrop-blur transition hover:bg-slate-800 disabled:opacity-40"
+      >
+        ✕
+      </button>
+
+      <div className="max-h-[calc(100dvh-9rem)] overflow-y-auto pr-1">
       <input
         ref={fileRef}
         type="file"
@@ -352,7 +364,7 @@ export function ProfileEditModal({
         onChange={(e) => setName(e.target.value)}
         placeholder="Digite seu nome"
         maxLength={40}
-        className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
+        className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
       />
 
       {/* Bio */}
@@ -362,7 +374,7 @@ export function ProfileEditModal({
         onChange={(e) => setBio(e.target.value)}
         placeholder="Conte um pouco sobre você (opcional)"
         rows={3}
-        className="mt-1.5 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
+        className="mt-1.5 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
       />
 
       {/* Foto de fundo (capa) */}
@@ -406,6 +418,7 @@ export function ProfileEditModal({
         >
           Salvar
         </button>
+      </div>
       </div>
       </>
       ) : (
