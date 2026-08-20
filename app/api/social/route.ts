@@ -1,206 +1,196 @@
-import { NextResponse, type NextRequest } from 'next/server'
-import { getCurrentUser } from '@/lib/auth'
-import { getSql } from '@/db/index'
-import { generateFriendCode } from '@/lib/friend-code'
+import { NextResponse } from 'next/server'
 
-type Row = Record<string, any>
+import { handleApiError } from '@/lib/api-error-response'
+import { ValidationError } from '@/lib/errors'
+import * as store from '@/lib/rtc/store'
+import type {
+  ChannelId,
+  ChatMessage,
+  MailboxMessage,
+  Member,
+  SignalKind,
+} from '@/lib/rtc/types'
 
-// Janela de "online": alguém é considerado online se teve atividade recente (não basta
-// existir um registro antigo de conexão, que nunca é apagado para contas logadas).
-const ONLINE_WINDOW_MS = 3 * 60 * 1000
+export const runtime = 'nodejs'
 
-export async function GET() {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
+type RtPayload<T> = { success: true; data: T }
 
-  const sql = getSql()
-  const [me] = await sql`
-    SELECT u.id, u.display_name, u.photo, u.cover, u.bio, u.friend_code
-    FROM users u WHERE u.id = ${user.id}
-  `
-  const friendCode = ((me?.friend_code as string | null) ?? null) || generateFriendCode()
-
-  const friends = await sql`
-    SELECT u.id, u.display_name, u.photo, u.cover, u.bio, u.friend_code,
-           r.client_id AS rtc_client, r.channel AS rtc_channel
-    FROM social_friends f
-    JOIN users u ON u.id = CASE WHEN f.user_a = ${user.id} THEN f.user_b ELSE f.user_a END
-    LEFT JOIN rtc_clients r ON r.user_id = u.id AND r.last_seen > ${Date.now() - ONLINE_WINDOW_MS}
-    WHERE f.user_a = ${user.id} OR f.user_b = ${user.id}
-    ORDER BY u.display_name
-  `
-
-  const requests = await sql`
-    SELECT r.id AS request_id, r.from_id, r.created_at, u.display_name, u.photo, u.cover, u.bio, u.friend_code
-    FROM social_requests r
-    JOIN users u ON u.id = r.from_id
-    WHERE r.to_id = ${user.id} AND r.status = 'pending'
-    ORDER BY r.created_at DESC
-  `
-
-  const followers = await sql`
-    SELECT u.id, u.display_name, u.photo, u.cover
-    FROM social_follows f JOIN users u ON u.id = f.follower_id
-    WHERE f.followee_id = ${user.id} ORDER BY f.created_at DESC
-  `
-  const following = await sql`
-    SELECT u.id, u.display_name, u.photo, u.cover
-    FROM social_follows f JOIN users u ON u.id = f.followee_id
-    WHERE f.follower_id = ${user.id} ORDER BY f.created_at DESC
-  `
-
-  const mapUser = (r: Row) => ({
-    id: r.id,
-    displayName: r.display_name || 'Usuário',
-    photo: r.photo ?? null,
-    cover: r.cover ?? null,
-    bio: r.bio ?? null,
-    code: r.friend_code ?? null,
-    online: Boolean(r.rtc_client),
-    channelId: r.rtc_channel ?? null,
-  })
-
-  return NextResponse.json({
-    me: {
-      id: user.id,
-      email: user.email,
-      displayName: user.name,
-      photo: user.photo,
-      cover: user.cover,
-      friendCode,
-      friendsCount: friends.length,
-      followersCount: followers.length,
-      followingCount: following.length,
-    },
-    friends: friends.map(mapUser),
-    requests: requests.map((r: Row) => ({
-      requestId: r.request_id,
-      fromId: r.from_id,
-      createdAt: r.created_at,
-      displayName: r.display_name,
-      photo: r.photo ?? null,
-      cover: r.cover ?? null,
-      bio: r.bio ?? null,
-      code: r.friend_code ?? null,
-    })),
-    followers: followers.map((u: Row) => ({ id: u.id, displayName: u.display_name, photo: u.photo ?? null })),
-    following: following.map((u: Row) => ({ id: u.id, displayName: u.display_name, photo: u.photo ?? null })),
-  })
+function ok<T>(data: T): NextResponse<RtPayload<T>> {
+  return NextResponse.json({ success: true, data })
 }
 
-export async function POST(req: NextRequest) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
+function readBody(body: unknown): Record<string, unknown> {
+  if (typeof body !== 'object' || body === null) throw new ValidationError('Corpo inválido')
+  return body as Record<string, unknown>
+}
 
-  let body: { action?: string; toCode?: string; toUserId?: string; fromUserId?: string; userId?: string }
+// ---- GET: poll / sync / chat histórico
+export async function GET(req: Request) {
   try {
-    body = (await req.json()) as typeof body
-  } catch {
-    return NextResponse.json({ error: 'INVALID_INPUT' }, { status: 400 })
-  }
-  const action = body.action || ''
-  const sql = getSql()
+    const url = new URL(req.url)
+    const action = url.searchParams.get('action') ?? 'mailbox'
+    const clientId = url.searchParams.get('clientId') ?? ''
 
-  const ensureCode = async (uid: string): Promise<string> => {
-    const [u] = await sql<{ friend_code: string | null }[]>`SELECT friend_code FROM users WHERE id = ${uid}`
-    if (u?.friend_code) return u.friend_code
-    const code = generateFriendCode()
-    await sql`UPDATE users SET friend_code = ${code} WHERE id = ${uid}`
-    return code
-  }
-  await ensureCode(user.id)
-
-  if (action === 'send-request') {
-    // Aceita o alvo por código OU por id de usuário (perfil/chat).
-    let tid: string | undefined
-    if (body.toUserId) {
-      tid = String(body.toUserId).trim()
-      const t = await sql`SELECT id FROM users WHERE id = ${tid} LIMIT 1`
-      if (!t[0]) return NextResponse.json({ ok: false, error: 'NOT_FOUND', message: 'Usuário não encontrado.' })
-    } else {
-      const code = String(body.toCode || '').trim().toUpperCase()
-      if (!code || code.length < 4 || code.length > 8) {
-        return NextResponse.json({ error: 'CODE_REQUIRED' }, { status: 400 })
-      }
-      const target = await sql`SELECT id FROM users WHERE friend_code = ${code} AND id <> ${user.id} LIMIT 1`
-      tid = target[0]?.id as string | undefined
-      if (!tid) return NextResponse.json({ ok: false, error: 'NOT_FOUND', message: 'Código não encontrado.' })
+    if (action === 'mailbox') {
+      const messages: MailboxMessage[] = clientId ? await store.drainMailbox(clientId) : []
+      return ok<{
+        messages: MailboxMessage[]
+        members: Member[]
+        offlineMembers: Member[]
+      }>({
+        messages,
+        members: await store.onlineMembers(),
+        offlineMembers: await store.offlineMembers(),
+      })
     }
-    if (!tid || tid === user.id) return NextResponse.json({ ok: false, error: 'SELF', message: 'Você não pode adicionar a si mesmo.' })
 
-    const already = await sql`
-      SELECT 1 FROM social_friends
-      WHERE (user_a = ${user.id} AND user_b = ${tid}) OR (user_a = ${tid} AND user_b = ${user.id}) LIMIT 1
-    `
-    if (already.length) return NextResponse.json({ ok: false, error: 'ALREADY', message: 'Vocês já são amigos.' })
+    if (action === 'sync') {
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      const member = await store.getMember(clientId)
+      const channel = (member?.channel ?? 'geral') as ChannelId
+      const current = (await store.membersInChannel(channel)).filter(
+        (m) => m.clientId !== clientId
+      )
+      return ok<{ channel: ChannelId; members: Member[] }>({ channel, members: current })
+    }
 
-    const pending = await sql`
-      SELECT 1 FROM social_requests
-      WHERE ((from_id = ${user.id} AND to_id = ${tid}) OR (from_id = ${tid} AND to_id = ${user.id})) AND status = 'pending'
-      LIMIT 1
-    `
-    if (pending.length) return NextResponse.json({ ok: false, error: 'PENDING', message: 'Já existe um convite pendente.' })
+    if (action === 'chat') {
+      const channel = url.searchParams.get('channel') ?? 'geral'
+      return ok<{ messages: ChatMessage[] }>({
+        messages: await store.chatMessages(channel as ChannelId),
+      })
+    }
 
-    await sql`
-      INSERT INTO social_requests (id, from_id, to_id, status, created_at)
-      VALUES (${'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)}, ${user.id}, ${tid}, 'pending', ${Date.now()})
-      ON CONFLICT (from_id, to_id) DO UPDATE SET status = 'pending', created_at = ${Date.now()}
-    `
-    return NextResponse.json({ ok: true, message: 'Convite enviado!' })
+    throw new ValidationError('Ação inválida')
+  } catch (error) {
+    return handleApiError(error)
   }
+}
 
-  if (action === 'accept-request') {
-    const fromId = String(body.fromUserId || '')
-    const reqCheck = await sql`
-      SELECT id FROM social_requests WHERE to_id = ${user.id} AND from_id = ${fromId} AND status = 'pending' LIMIT 1
-    `
-    if (!reqCheck.length) return NextResponse.json({ ok: false, error: 'NOT_FOUND', message: 'Convite não encontrado.' })
-    await sql`UPDATE social_requests SET status = 'accepted' WHERE to_id = ${user.id} AND from_id = ${fromId}`
-    await sql`
-      INSERT INTO social_friends (user_a, user_b, created_at)
-      VALUES (${fromId}, ${user.id}, ${Date.now()}) ON CONFLICT DO NOTHING
-    `
-    return NextResponse.json({ ok: true, message: 'Agora vocês são amigos!' })
+// ---- POST: join / leave / signal / chat / chat-delete / check-name
+export async function POST(req: Request) {
+  try {
+    const body = readBody(await req.json())
+
+    const action = body.action
+
+    if (action === 'join') {
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      const channel = typeof body.channel === 'string' ? body.channel : 'geral'
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      const photo = typeof body.photo === 'string' ? body.photo : undefined
+      const bio = typeof body.bio === 'string' ? body.bio : undefined
+      const cover = typeof body.cover === 'string' ? body.cover : undefined
+      const password = typeof body.password === 'string' ? body.password.trim() : ''
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      const result = await store.joinChannel(
+        clientId,
+        name,
+        photo,
+        bio,
+        cover,
+        channel as ChannelId,
+        null,
+        null,
+        password
+      )
+      return ok<{ channel: ChannelId; members: Member[] }>({
+        channel: result.channel,
+        members: result.members,
+      })
+    }
+
+    if (action === 'leave') {
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      await store.leaveChannel(clientId)
+      return ok<{ left: boolean }>({ left: true })
+    }
+
+    if (action === 'signal') {
+      const from = typeof body.from === 'string' ? body.from : ''
+      const to = typeof body.to === 'string' ? body.to : ''
+      const kind = body.kind as SignalKind
+      if (!from || !to) throw new ValidationError('from/to são obrigatórios')
+      if (!['offer', 'answer', 'ice'].includes(kind)) {
+        throw new ValidationError('kind inválido')
+      }
+      await store.enqueueSignal(from, to, kind, body.data as import('postgres').JSONValue)
+      return ok<{ queued: boolean }>({ queued: true })
+    }
+
+    if (action === 'screen-kind') {
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      const trackIds = Array.isArray(body.trackIds)
+        ? (body.trackIds as unknown[]).filter((t): t is string => typeof t === 'string')
+        : []
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      await store.broadcastScreenKind(clientId, trackIds)
+      return ok<{ ok: boolean }>({ ok: true })
+    }
+
+    if (action === 'chat') {
+      const channel = typeof body.channel === 'string' ? body.channel : 'geral'
+      const text = typeof body.text === 'string' ? body.text.trim() : ''
+      const authorId = typeof body.authorId === 'string' ? body.authorId.trim() : ''
+      const author = typeof body.author === 'string' ? body.author : ''
+      const type = body.type === 'voice' ? 'voice' : undefined
+      const audioUrl = typeof body.audioUrl === 'string' ? body.audioUrl : undefined
+      if (!text) throw new ValidationError('Mensagem vazia')
+      return ok<{ message: ChatMessage }>({
+        message: await store.addChat(channel as ChannelId, authorId, author, text, {
+          type,
+          audioUrl,
+        }),
+      })
+    }
+
+    if (action === 'chat-delete') {
+      const messageId = typeof body.messageId === 'string' ? body.messageId : ''
+      if (!messageId) throw new ValidationError('messageId é obrigatório')
+      return ok<{ deleted: boolean }>({ deleted: await store.deleteChat(messageId) })
+    }
+
+    if (action === 'chat-clear') {
+      const channel = typeof body.channel === 'string' ? body.channel : 'geral'
+      if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      return ok<{ cleared: number }>({
+        cleared: await store.clearChatChannel(channel as ChannelId),
+      })
+    }
+
+    if (action === 'check-name') {
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      const exceptClientId = typeof body.exceptClientId === 'string' ? body.exceptClientId : undefined
+      if (!name) throw new ValidationError('name é obrigatório')
+      return ok<{ available: boolean }>({
+        available: !(await store.isNameTaken(name, exceptClientId)),
+      })
+    }
+
+    if (action === 'remove-offline') {
+      return ok<{ removed: Member[] }>({ removed: await store.removeAllOffline() })
+    }
+
+    if (action === 'remove-member') {
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      if (!clientId) throw new ValidationError('clientId é obrigatório')
+      return ok<{ removed: Member | undefined }>({
+        removed: await store.removeOfflineMember(clientId),
+      })
+    }
+
+    if (action === 'admin-mute') {
+      const targetId = typeof body.targetId === 'string' ? body.targetId.trim() : ''
+      const muted = body.muted === true
+      if (!targetId) throw new ValidationError('targetId é obrigatório')
+      await store.broadcastAdminMute(targetId, muted)
+      return ok<{ muted: boolean }>({ muted })
+    }
+
+    throw new ValidationError('Ação inválida')
+  } catch (error) {
+    return handleApiError(error)
   }
-
-  if (action === 'decline-request') {
-    const fromId = String(body.fromUserId || '')
-    await sql`
-      UPDATE social_requests SET status = 'declined'
-      WHERE to_id = ${user.id} AND from_id = ${fromId} AND status = 'pending'
-    `
-    return NextResponse.json({ ok: true })
-  }
-
-  if (action === 'remove-friend') {
-    const other = String(body.userId || '')
-    if (!other) return NextResponse.json({ ok: false, error: 'USER_REQUIRED' }, { status: 400 })
-    await sql`
-      DELETE FROM social_friends
-      WHERE (user_a = ${user.id} AND user_b = ${other}) OR (user_a = ${other} AND user_b = ${user.id})
-    `
-    await sql`
-      DELETE FROM social_requests
-      WHERE (from_id = ${user.id} AND to_id = ${other}) OR (from_id = ${other} AND to_id = ${user.id})
-    `
-    return NextResponse.json({ ok: true, message: 'Amizade encerrada.' })
-  }
-
-  if (action === 'follow') {
-    const other = String(body.userId || '')
-    if (!other || other === user.id) return NextResponse.json({ ok: false, error: 'USER_REQUIRED' }, { status: 400 })
-    await sql`
-      INSERT INTO social_follows (follower_id, followee_id, created_at)
-      VALUES (${user.id}, ${other}, ${Date.now()}) ON CONFLICT DO NOTHING
-    `
-    return NextResponse.json({ ok: true })
-  }
-
-  if (action === 'unfollow') {
-    const other = String(body.userId || '')
-    await sql`DELETE FROM social_follows WHERE follower_id = ${user.id} AND followee_id = ${other}`
-    return NextResponse.json({ ok: true })
-  }
-
-  return NextResponse.json({ error: 'UNKNOWN_ACTION' }, { status: 400 })
 }

@@ -2221,7 +2221,7 @@ export function ShareRoom() {
                     </a>
                   </div>
                 ) : (
-                  <div className="flex flex-1 flex-col">
+                  <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-4">
                     <p className="mb-2 text-center text-xs font-medium text-slate-400">
                       Dê um nome para sua sala
                     </p>
@@ -2255,6 +2255,8 @@ export function ShareRoom() {
                           onChange={(e) => setNewRoomPassword(e.target.value)}
                           maxLength={20}
                           type="password"
+                          autoComplete="off"
+                          name="roomPassword"
                           placeholder="Senha (opcional)"
                           className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-amber-400/60 focus:ring-2 focus:ring-amber-500/20"
                         />
@@ -3403,7 +3405,7 @@ export function ShareRoom() {
                       name="adminPwd"
                       type="password"
                       placeholder={t('password')}
-                      autoComplete="current-password"
+                      autoComplete="off"
                       className="h-8 w-28 rounded border border-white/20 bg-white/5 px-2 text-base outline-none"
                     />
                     <button
@@ -3667,6 +3669,8 @@ export function ShareRoom() {
             <input
               autoFocus
               type="password"
+              autoComplete="off"
+              name="joinRoomPassword"
               value={joinPasswordValue}
               onChange={(e) => setJoinPasswordValue(e.target.value)}
               onKeyDown={(e) => {

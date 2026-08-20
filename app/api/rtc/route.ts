@@ -91,6 +91,7 @@ export async function POST(req: Request) {
       const photo = typeof body.photo === 'string' ? body.photo : undefined
       const bio = typeof body.bio === 'string' ? body.bio : undefined
       const cover = typeof body.cover === 'string' ? body.cover : undefined
+      const password = typeof body.password === 'string' ? body.password.trim() : ''
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
       const user = await getCurrentUser()
@@ -102,7 +103,8 @@ export async function POST(req: Request) {
         cover,
         channel as ChannelId,
         user?.id ?? null,
-        clientIp(req)
+        clientIp(req),
+        password
       )
       return ok<{ channel: ChannelId; members: Member[] }>({
         channel: result.channel,
