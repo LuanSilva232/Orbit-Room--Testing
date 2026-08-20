@@ -1721,6 +1721,7 @@ export function ShareRoom() {
       tiles.push({
         id: 'local-cam',
         name: `${name} (Você)`,
+        photo: profile.photo,
         stream: localStream,
         hasVideo: localStream.getVideoTracks().length > 0,
         isLocal: true,
@@ -1731,6 +1732,7 @@ export function ShareRoom() {
       tiles.push({
         id: 'local-avatar',
         name: `${name} (Você)`,
+        photo: profile.photo,
         stream: localStream,
         hasVideo: false,
         isLocal: true,
@@ -1785,7 +1787,7 @@ export function ShareRoom() {
     }
   }
     return tiles
-  }, [inCall, camOn, name, screenStreaming, remotePeers, mutedPeers, isAdmin, demoScreens])
+  }, [inCall, camOn, name, profile, screenStreaming, remotePeers, mutedPeers, isAdmin, demoScreens])
 
   // Ordena as telas compartilhadas por ordem de ativação (quem começou primeiro).
   const allScreenTiles = tiles.filter((t) => t.isScreen)
@@ -4046,5 +4048,4 @@ export function ShareRoom() {
     </div>
   )
 }
-
 
