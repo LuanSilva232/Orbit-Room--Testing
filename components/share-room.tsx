@@ -2001,7 +2001,7 @@ export function ShareRoom() {
       <aside
         className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-3 lg:col-start-1 lg:row-start-1 lg:overflow-y-auto ${
           mobileTab === 'inicio' ? 'flex' : 'hidden'
-        } lg:flex`}
+        } ${inicioView === 'home' ? 'lg:row-span-2' : ''} lg:flex`}
       >
         <div className="flex flex-col items-center px-1 pt-1 text-center">
           <img
@@ -2547,7 +2547,7 @@ export function ShareRoom() {
       <aside
         className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-4 lg:col-start-1 lg:row-start-2 lg:min-h-0 ${
           mobileTab === 'chat' ? 'flex' : 'hidden'
-        } lg:flex`}
+        } ${inicioView === 'home' ? 'lg:hidden' : 'lg:flex'}`}
       >
         {!inCall ? (
           <div className="flex flex-1 flex-col items-center justify-center text-center">
@@ -2741,7 +2741,7 @@ export function ShareRoom() {
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder={t('writeMsg')}
-                className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-800/60 px-3 text-sm outline-none focus:border-indigo-400/50"
+                className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-800/60 px-3 text-base outline-none focus:border-indigo-400/50"
               />
               <button
                 type="submit"
@@ -3404,7 +3404,7 @@ export function ShareRoom() {
                       type="password"
                       placeholder={t('password')}
                       autoComplete="current-password"
-                      className="h-8 w-28 rounded border border-white/20 bg-white/5 px-2 text-xs outline-none"
+                      className="h-8 w-28 rounded border border-white/20 bg-white/5 px-2 text-base outline-none"
                     />
                     <button
                       type="submit"
