@@ -133,6 +133,9 @@ export async function isValidChannel(channel: string): Promise<boolean> {
   return rows.length > 0
 }
 
+// Alias de compatibilidade para quem usa `isChannel`.
+export const isChannel = isValidChannel
+
 // Salas públicas: canais fixos e salas personalizadas marcadas como públicas.
 export async function isPublicChannel(channel: string): Promise<boolean> {
   if (FIXED_CHANNELS.includes(channel)) return true
