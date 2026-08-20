@@ -369,6 +369,11 @@ export function ShareRoom() {
   const [viewProfile, setViewProfile] = useState<(Profile & { userId?: string }) | null>(null)
   const [viewAnonProfile, setViewAnonProfile] = useState<{ name: string } | null>(null)
   const [profileMenuMsg, setProfileMenuMsg] = useState<string | null>(null)
+  const [msgRelation, setMsgRelation] = useState<{
+    isFriend: boolean
+    isFollowing: boolean
+    requestStatus: 'sent' | 'received' | null
+  } | null>(null)
 
   const [mutedPeers, setMutedPeers] = useState<Record<string, boolean>>({})
   const [recording, setRecording] = useState(false)
@@ -2176,7 +2181,23 @@ export function ShareRoom() {
                       title="Opções da mensagem"
                       onClick={(e) => {
                         e.stopPropagation()
-                        setProfileMenuMsg(profileMenuMsg === m.id ? null : m.id)
+                        const open = profileMenuMsg === m.id
+                        setProfileMenuMsg(open ? null : m.id)
+                        setMsgRelation(null)
+                        if (!open && !m.isAnonymous && m.userId && authUser && m.userId !== authUser.id) {
+                          fetch('/api/social/user?userId=' + encodeURIComponent(m.userId))
+                            .then((r) => r.json())
+                            .then((d) => {
+                              if (d?.relation) {
+                                setMsgRelation({
+                                  isFriend: !!d.relation.isFriend,
+                                  isFollowing: !!d.relation.isFollowing,
+                                  requestStatus: d?.requestStatus || null,
+                                })
+                              }
+                            })
+                            .catch(() => {})
+                        }
                       }}
                       className="shrink-0 text-slate-500 transition hover:text-slate-200"
                     >
@@ -2213,38 +2234,50 @@ export function ShareRoom() {
                       </button>
                       {!m.isAnonymous && m.userId && authUser && m.userId !== authUser.id && (
                         <>
-                          <button
-                            onClick={() => {
-                              void fetch('/api/social', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ action: 'send-request', toUserId: m.userId }),
-                              })
-                                .then((r) => r.json())
-                                .then((res) =>
-                                  toast(res?.ok ? res.message || 'Convite enviado!' : res?.message || 'Não foi possível adicionar')
-                                )
-                              setProfileMenuMsg(null)
-                            }}
-                            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-emerald-300 hover:bg-white/5"
-                          >
-                            🤝 Adicionar amigo
-                          </button>
-                          <button
-                            onClick={() => {
-                              void fetch('/api/social', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ action: 'follow', userId: m.userId }),
-                              })
-                                .then((r) => r.json())
-                                .then((res) => toast(res?.ok ? 'Você agora segue esta pessoa.' : res?.message || 'Não foi possível seguir'))
-                              setProfileMenuMsg(null)
-                            }}
-                            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-indigo-200 hover:bg-white/5"
-                          >
-                            ➕ Seguir
-                          </button>
+                          {msgRelation?.isFriend ? (
+                            <div className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-400">
+                              ✅ Amigos
+                            </div>
+                          ) : msgRelation?.requestStatus ? (
+                            <div className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-400">
+                              ⏳ Pendente
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                void fetch('/api/social', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ action: 'send-request', toUserId: m.userId }),
+                                })
+                                  .then((r) => r.json())
+                                  .then((res) =>
+                                    toast(res?.ok ? res.message || 'Convite enviado!' : res?.message || 'Não foi possível adicionar')
+                                  )
+                                setProfileMenuMsg(null)
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-emerald-300 hover:bg-white/5"
+                            >
+                              🤝 Adicionar amigo
+                            </button>
+                          )}
+                          {!msgRelation?.isFollowing && (
+                            <button
+                              onClick={() => {
+                                void fetch('/api/social', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ action: 'follow', userId: m.userId }),
+                                })
+                                  .then((r) => r.json())
+                                  .then((res) => toast(res?.ok ? 'Você agora segue esta pessoa.' : res?.message || 'Não foi possível seguir'))
+                                setProfileMenuMsg(null)
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-indigo-200 hover:bg-white/5"
+                            >
+                              ➕ Seguir
+                            </button>
+                          )}
                         </>
                       )}
                       <button
