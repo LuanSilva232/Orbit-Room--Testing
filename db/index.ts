@@ -198,6 +198,9 @@ export function ensureDb(): Promise<void> {
         ALTER TABLE rooms ADD COLUMN IF NOT EXISTS password text
       `
       await sql`
+        ALTER TABLE rooms ADD COLUMN IF NOT EXISTS capacity integer NOT NULL DEFAULT 0
+      `
+      await sql`
         CREATE INDEX IF NOT EXISTS rooms_owner_idx
           ON rooms (owner_id)
       `
