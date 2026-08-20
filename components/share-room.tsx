@@ -2339,7 +2339,12 @@ export function ShareRoom() {
         }}
       />
       {viewProfile && (
-        <ProfileViewModal profile={viewProfile} currentUserId={authUser?.id} onClose={() => setViewProfile(null)} />
+        <ProfileViewModal
+          profile={viewProfile}
+          currentUserId={authUser?.id}
+          onClose={() => setViewProfile(null)}
+          onNavigate={(p) => setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined })}
+        />
       )}
       {viewAnonProfile && (
         <AnonProfileModal name={viewAnonProfile.name} onClose={() => setViewAnonProfile(null)} />
@@ -2741,7 +2746,11 @@ export function ShareRoom() {
               {configPane === 'online' && (
                 <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
                   <div className="text-sm font-semibold">🤝 {t('friendsOnline')}</div>
-                  <FriendsOnline />
+                  <FriendsOnline
+                    onOpenProfile={(p) =>
+                      setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined, bio: p.bio ?? undefined, cover: p.cover ?? undefined })
+                    }
+                  />
                 </section>
               )}
 
@@ -2749,7 +2758,11 @@ export function ShareRoom() {
               {configPane === 'amigos' && (
                 authUser ? (
                   <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
-                    <FriendsPanel />
+                    <FriendsPanel
+                      onOpenProfile={(p) =>
+                        setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined, bio: p.bio ?? undefined, cover: p.cover ?? undefined })
+                      }
+                    />
                   </section>
                 ) : (
                   <section className="share-panel-soft flex flex-col items-center gap-3 rounded-xl p-6 text-center">

@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import { FriendMoreMenu } from './friend-actions'
+
+export type OpenProfileFn = (u: {
+  userId: string
+  name: string
+  photo?: string | null
+  bio?: string | null
+  cover?: string | null
+}) => void
 
 type Friend = {
   id: string
@@ -104,7 +113,7 @@ function Aba({ active, onClick, label, count }: { active: boolean; onClick: () =
   )
 }
 
-export function FriendsPanel() {
+export function FriendsPanel({ onOpenProfile }: { onOpenProfile: OpenProfileFn }) {
   const [data, setData] = useState<SocialData | null>(null)
   const [tab, setTab] = useState<'enviar' | 'convites' | 'amigos'>('enviar')
   const [code, setCode] = useState('')
@@ -118,6 +127,9 @@ export function FriendsPanel() {
 
   useEffect(() => {
     load()
+    // Atualiza em tempo real: convites e amigos aparecem sem recarregar a página.
+    const id = setInterval(load, 2500)
+    return () => clearInterval(id)
   }, [])
 
   const copyCode = () => {
@@ -296,37 +308,53 @@ export function FriendsPanel() {
               <p className="text-xs text-slate-500">Envie seu código para começar.</p>
             </div>
           ) : (
-            data?.friends.map((f) => (
-              <div
-                key={f.id}
-                className="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 px-3 py-2.5 transition hover:bg-white/10"
-              >
-                <div className="relative">
-                  <div className="rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-0.5">
-                    <div className="rounded-full bg-slate-900 p-0.5">
-                      <Avatar name={f.name} photo={f.photo} size={38} />
+            data?.friends.map((f) => {
+              const following = data?.following.some((x) => x.id === f.id) ?? false
+              return (
+                <div
+                  key={f.id}
+                  className="flex items-center gap-2 rounded-2xl border border-white/5 bg-white/5 px-3 py-2.5 transition hover:bg-white/10"
+                >
+                  <button
+                    onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    title="Ver perfil"
+                  >
+                    <div className="relative shrink-0">
+                      <div className="rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-0.5">
+                        <div className="rounded-full bg-slate-900 p-0.5">
+                          <Avatar name={f.name} photo={f.photo} size={38} />
+                        </div>
+                      </div>
+                      <span
+                        className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-slate-900 ${
+                          f.online ? 'bg-emerald-400' : 'bg-slate-600'
+                        }`}
+                      />
                     </div>
-                  </div>
-                  <span
-                    className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-slate-900 ${
-                      f.online ? 'bg-emerald-400' : 'bg-slate-600'
-                    }`}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-white">{f.name}</p>
+                      <p className={`text-[11px] ${f.online ? 'text-emerald-300' : 'text-slate-500'}`}>
+                        {f.online ? '● Online' : 'Offline'}
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => removeFriend(f.id, f.name)}
+                    className="shrink-0 rounded-lg bg-rose-500/15 px-2.5 py-1.5 text-xs font-semibold text-rose-300 ring-1 ring-rose-400/20 transition hover:bg-rose-500/25 hover:text-white"
+                  >
+                    Remover
+                  </button>
+                  <FriendMoreMenu
+                    userId={f.id}
+                    isFollowing={following}
+                    canRemove
+                    onOpenProfile={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                    onChanged={load}
                   />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-white">{f.name}</p>
-                  <p className={`text-[11px] ${f.online ? 'text-emerald-300' : 'text-slate-500'}`}>
-                    {f.online ? '● Online' : 'Offline'}
-                  </p>
-                </div>
-                <button
-                  onClick={() => removeFriend(f.id, f.name)}
-                  className="rounded-lg bg-rose-500/15 px-2.5 py-1.5 text-xs font-semibold text-rose-300 ring-1 ring-rose-400/20 transition hover:bg-rose-500/25 hover:text-white"
-                >
-                  Remover
-                </button>
-              </div>
-            ))
+              )
+            })
           ))}
       </div>
     </div>

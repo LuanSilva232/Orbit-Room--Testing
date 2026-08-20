@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { FriendMoreMenu } from './friend-actions'
+import type { OpenProfileFn } from './friends-panel'
 
 type Friend = {
   id: string
@@ -29,24 +31,32 @@ const Avatar = ({ name, photo, size = 36 }: { name?: string; photo?: string | nu
 )
 
 // Mostra SOMENTE os amigos (online e offline). Anônimos e visitantes não aparecem.
-export function FriendsOnline() {
+export function FriendsOnline({ onOpenProfile }: { onOpenProfile: OpenProfileFn }) {
   const [friends, setFriends] = useState<Friend[]>([])
+  const [following, setFollowing] = useState<string[]>([])
   const [logged, setLogged] = useState<boolean | null>(null)
   const [loaded, setLoaded] = useState(false)
 
-  useEffect(() => {
+  const load = () =>
     fetch('/api/social')
       .then((r) => (r.status === 401 ? null : r.json()))
       .then((d) => {
         if (d?.me) {
           setLogged(true)
           setFriends((d.friends || []) as Friend[])
+          setFollowing(((d.following || []) as { id: string }[]).map((x) => x.id))
         } else {
           setLogged(false)
         }
       })
       .catch(() => setLogged(false))
       .finally(() => setLoaded(true))
+
+  useEffect(() => {
+    load()
+    // Atualiza em tempo real: quem fica/sai online aparece sem recarregar.
+    const id = setInterval(load, 2500)
+    return () => clearInterval(id)
   }, [])
 
   if (!loaded) return <p className="text-xs text-slate-500">Carregando...</p>
@@ -85,13 +95,30 @@ export function FriendsOnline() {
         ) : (
           <div className="mt-1 space-y-1">
             {online.map((f) => (
-              <div key={f.id} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
-                <div className="relative">
-                  <Avatar name={f.name} photo={f.photo} size={32} />
-                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-emerald-400" />
-                </div>
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                {f.channelId && <span translate="no" className="shrink-0 rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">{f.channelId}</span>}
+              <div key={f.id} className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm hover:bg-white/5">
+                <button
+                  onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  title="Ver perfil"
+                >
+                  <div className="relative shrink-0">
+                    <Avatar name={f.name} photo={f.photo} size={32} />
+                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-emerald-400" />
+                  </div>
+                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                  {f.channelId && (
+                    <span translate="no" className="shrink-0 rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">
+                      {f.channelId}
+                    </span>
+                  )}
+                </button>
+                <FriendMoreMenu
+                  userId={f.id}
+                  isFollowing={following.includes(f.id)}
+                  canRemove
+                  onOpenProfile={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                  onChanged={load}
+                />
               </div>
             ))}
           </div>
@@ -105,12 +132,25 @@ export function FriendsOnline() {
         ) : (
           <ul className="mt-1 space-y-0.5">
             {offline.map((f) => (
-              <li key={f.id} className="flex items-center gap-2 px-1.5 py-1 text-sm text-slate-400">
-                <div className="relative">
-                  <Avatar name={f.name} photo={f.photo} size={28} />
-                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-slate-500" />
-                </div>
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+              <li key={f.id} className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm text-slate-400 hover:bg-white/5">
+                <button
+                  onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  title="Ver perfil"
+                >
+                  <div className="relative shrink-0">
+                    <Avatar name={f.name} photo={f.photo} size={28} />
+                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-slate-500" />
+                  </div>
+                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                </button>
+                <FriendMoreMenu
+                  userId={f.id}
+                  isFollowing={following.includes(f.id)}
+                  canRemove
+                  onOpenProfile={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
+                  onChanged={load}
+                />
               </li>
             ))}
           </ul>
