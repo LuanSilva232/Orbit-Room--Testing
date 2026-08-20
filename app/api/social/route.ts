@@ -5,6 +5,10 @@ import { generateFriendCode } from '@/lib/friend-code'
 
 type Row = Record<string, any>
 
+// Janela de "online": alguém é considerado online se teve atividade recente (não basta
+// existir um registro antigo de conexão, que nunca é apagado para contas logadas).
+const ONLINE_WINDOW_MS = 3 * 60 * 1000
+
 export async function GET() {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
@@ -21,7 +25,7 @@ export async function GET() {
            r.client_id AS rtc_client, r.channel AS rtc_channel
     FROM social_friends f
     JOIN users u ON u.id = CASE WHEN f.user_a = ${user.id} THEN f.user_b ELSE f.user_a END
-    LEFT JOIN rtc_clients r ON r.user_id = u.id
+    LEFT JOIN rtc_clients r ON r.user_id = u.id AND r.last_seen > ${Date.now() - ONLINE_WINDOW_MS}
     WHERE f.user_a = ${user.id} OR f.user_b = ${user.id}
     ORDER BY u.display_name
   `

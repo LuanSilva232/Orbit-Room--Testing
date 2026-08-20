@@ -4,6 +4,9 @@ import { getSql } from '@/db/index'
 
 type Row = Record<string, any>
 
+// Janela de "online": só conta atividade recente, para não marcar quem já saiu como online.
+const ONLINE_WINDOW_MS = 3 * 60 * 1000
+
 // Perfil público de outro usuário para a aba Amigos / popups.
 export async function GET(req: NextRequest) {
   const targetId = req.nextUrl.searchParams.get('userId') || ''
@@ -17,13 +20,15 @@ export async function GET(req: NextRequest) {
   `
   if (!u) return NextResponse.json({ ok: false, error: 'NOT_FOUND' }, { status: 404 })
 
-  const [presence] = await sql`SELECT client_id FROM rtc_clients WHERE user_id = ${targetId} LIMIT 1`
+  const [presence] = await sql`
+    SELECT client_id FROM rtc_clients WHERE user_id = ${targetId} AND last_seen > ${Date.now() - ONLINE_WINDOW_MS} LIMIT 1
+  `
 
   const friends = await sql`
     SELECT u2.id, u2.display_name, u2.photo, r.channel AS online_channel, r.client_id
     FROM social_friends sf
     JOIN users u2 ON u2.id = CASE WHEN sf.user_a = ${targetId} THEN sf.user_b ELSE sf.user_a END
-    LEFT JOIN rtc_clients r ON r.user_id = u2.id
+    LEFT JOIN rtc_clients r ON r.user_id = u2.id AND r.last_seen > ${Date.now() - ONLINE_WINDOW_MS}
     WHERE sf.user_a = ${targetId} OR sf.user_b = ${targetId}
     ORDER BY u2.display_name LIMIT 60
   `
