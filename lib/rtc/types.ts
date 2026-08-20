@@ -22,6 +22,7 @@ export type Room = {
   hasPassword: boolean
   ownerName?: string
   ownerPhoto?: string
+  capacity: number
 }
 
 export type RoomInvite = {

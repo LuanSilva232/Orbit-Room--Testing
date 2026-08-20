@@ -253,6 +253,7 @@ type RoomRow = {
   owner_id: string
   password: string | null
   created_at: string | number
+  capacity: number
   owner_name: string | null
   owner_photo: string | null
 }
@@ -267,6 +268,7 @@ function toRoom(r: RoomRow): Room {
     hasPassword: Boolean(r.password),
     ownerName: r.owner_name ?? undefined,
     ownerPhoto: r.owner_photo ?? undefined,
+    capacity: r.capacity ?? 0,
   }
 }
 
@@ -274,7 +276,7 @@ function toRoom(r: RoomRow): Room {
 async function roomRowWithPassword(id: string): Promise<RoomRow | undefined> {
   await ensureDb()
   const rows = await getSql()<RoomRow[]>`
-    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at,
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at, r.capacity,
            u.display_name AS owner_name, u.photo AS owner_photo
     FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
     WHERE r.id = ${id}
@@ -292,13 +294,13 @@ export async function roomById(id: string): Promise<Room | undefined> {
 async function listOccupiedRooms(isPrivate: boolean): Promise<Room[]> {
   await ensureDb()
   const rows = await getSql()<RoomRow[]>`
-    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at,
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at, r.capacity,
            u.display_name AS owner_name, u.photo AS owner_photo
     FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
     WHERE r.is_private = ${isPrivate}
       AND EXISTS (
         SELECT 1 FROM rtc_clients c
-        WHERE c.channel = r.id AND c.left_at IS NULL
+        WHERE c.channel = r.id AND c.left_at IS NULL AND c.last_seen > ${nowMs() - PRESENT_MS}
       )
     ORDER BY r.created_at DESC
   `
@@ -316,7 +318,7 @@ export async function listPrivateRooms(): Promise<Room[]> {
 export async function listMyRooms(userId: string): Promise<Room[]> {
   await ensureDb()
   const rows = await getSql()<RoomRow[]>`
-    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at,
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at, r.capacity,
            u.display_name AS owner_name, u.photo AS owner_photo
     FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
     WHERE r.owner_id = ${userId} ORDER BY r.created_at DESC
@@ -328,15 +330,16 @@ export async function createRoom(
   name: string,
   isPrivate: boolean,
   ownerId: string,
-  password?: string
+  password?: string,
+  capacity = 0
 ): Promise<Room> {
   await ensureDb()
   const id = 'room_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
   const now = nowMs()
   const pwd = isPrivate ? (password?.trim() || null) : null
   await getSql()`
-    INSERT INTO rooms (id, name, is_private, owner_id, password, created_at)
-    VALUES (${id}, ${name}, ${isPrivate}, ${ownerId}, ${pwd}, ${now})
+    INSERT INTO rooms (id, name, is_private, owner_id, password, created_at, capacity)
+    VALUES (${id}, ${name}, ${isPrivate}, ${ownerId}, ${pwd}, ${now}, ${capacity})
   `
   return {
     id,
@@ -345,7 +348,31 @@ export async function createRoom(
     ownerId,
     createdAt: now,
     hasPassword: Boolean(pwd),
+    capacity,
   }
+}
+
+/** Edita uma sala (somente o dono). Retorna a sala atualizada ou undefined se não encontrar. */
+export async function updateRoom(
+  roomId: string,
+  ownerId: string,
+  fields: { name: string; isPrivate: boolean; password?: string; capacity: number }
+): Promise<Room | undefined> {
+  await ensureDb()
+  const row = await roomRowWithPassword(roomId)
+  if (!row || row.owner_id !== ownerId) return undefined
+  const pwd = fields.isPrivate
+    ? fields.password?.trim()
+      ? fields.password.trim()
+      : row.password
+    : null
+  await getSql()`
+    UPDATE rooms
+    SET name = ${fields.name}, is_private = ${fields.isPrivate}, password = ${pwd},
+        capacity = ${fields.capacity}
+    WHERE id = ${roomId}
+  `
+  return toRoom({ ...row, name: fields.name, is_private: fields.isPrivate, password: pwd, capacity: fields.capacity })
 }
 
 // --- Convites de sala ---
@@ -362,10 +389,11 @@ export async function sendRoomInvite(
   if (target.length === 0) throw new AppError('Destinatário não encontrado.', 404, 'USER_NOT_FOUND')
   if (fromUserId === toUserId) throw new AppError('Você não pode se convidar.', 400, 'SELF_INVITE')
   const id = 'rinv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+  // Evita duplicar: remove convite anterior do mesmo amigo para a mesma sala.
+  await getSql()`DELETE FROM room_invites WHERE room_id = ${roomId} AND to_id = ${toUserId}`
   await getSql()`
     INSERT INTO room_invites (id, room_id, from_id, to_id, created_at)
     VALUES (${id}, ${roomId}, ${fromUserId}, ${toUserId}, ${nowMs()})
-    ON CONFLICT DO NOTHING
   `
 }
 
@@ -508,6 +536,20 @@ export async function joinChannel(
         } else if (password?.trim() !== row.password) {
           throw new AppError('Senha incorreta. Verifique e tente de novo.', 403, 'ROOM_PASSWORD')
         }
+      }
+    }
+    // Limite de pessoas definido pelo dono (4/8/16). Não bloqueia quem já está na sala.
+    if (row.capacity > 0 && previous?.channel !== channel) {
+      const active = await getSql()<{ c: string | number }[]>`
+        SELECT COUNT(*) AS c FROM rtc_clients
+        WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${now - PRESENT_MS}
+      `
+      if (Number(active[0]?.c ?? 0) >= row.capacity) {
+        throw new AppError(
+          `Esta sala está cheia (limite de ${row.capacity} pessoas). Tente outra sala.`,
+          409,
+          'ROOM_FULL'
+        )
       }
     }
   }

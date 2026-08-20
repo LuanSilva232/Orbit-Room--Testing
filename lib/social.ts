@@ -35,11 +35,14 @@ export async function requireUser(id: string): Promise<UserRow> {
 // --- Listas básicas ---------------------------------------------------------
 
 async function friendRows(meId: string): Promise<UserRow[]> {
+  // A amizade é gravada nas duas direções ((me,X) e (X,me)). Para cada amigo há
+  // portanto DOIS registros; o GROUP BY deduplica para o amigo aparecer só uma vez.
   return getSql()<UserRow[]>`
     SELECT u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.friend_code
     FROM social_friends sf
     JOIN users u ON u.id = CASE WHEN sf.user_a = ${meId} THEN sf.user_b ELSE sf.user_a END
     WHERE (sf.user_a = ${meId} OR sf.user_b = ${meId}) AND u.status = 'active'
+    GROUP BY u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.friend_code
   `
 }
 
