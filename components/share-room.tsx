@@ -1873,7 +1873,6 @@ export function ShareRoom() {
     <div
       className={`theme-${settings.theme} relative flex h-dvh flex-col gap-3 overflow-hidden p-3 pb-24 lg:h-screen lg:grid lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[minmax(0,auto)_minmax(0,1fr)] lg:overflow-hidden lg:pb-3`}
       onClick={() => {
-        setViewProfile(null)
         setProfileMenuMsg(null)
       }}
     >
