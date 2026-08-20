@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { handleApiError } from '@/lib/api-error-response'
-import { ValidationError } from '@/lib/errors'
+import { AppError, ValidationError, UnauthorizedError } from '@/lib/errors'
 import * as store from '@/lib/rtc/store'
 import type {
   ChannelId,
@@ -10,6 +10,8 @@ import type {
   Member,
   SignalKind,
 } from '@/lib/rtc/types'
+import { getCurrentUser } from '@/lib/auth'
+import * as social from '@/lib/social'
 
 export const runtime = 'nodejs'
 
@@ -24,11 +26,20 @@ function readBody(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>
 }
 
-// ---- GET: poll / sync / chat histórico
+const SOCIAL_ACTIONS = new Set([
+  'send-request',
+  'accept-request',
+  'decline-request',
+  'remove-friend',
+  'follow',
+  'unfollow',
+])
+
+// ---- GET: painel social (amigos/seguidores) ou rotas legadas de RTC --------
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url)
-    const action = url.searchParams.get('action') ?? 'mailbox'
+    const action = url.searchParams.get('action') ?? 'default'
     const clientId = url.searchParams.get('clientId') ?? ''
 
     if (action === 'mailbox') {
@@ -61,21 +72,42 @@ export async function GET(req: Request) {
       })
     }
 
-    throw new ValidationError('Ação inválida')
+    // Padrão: painel de amigos do usuário logado.
+    const user = await getCurrentUser()
+    if (!user) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
+    return NextResponse.json(await social.getSocialOverview(user.id))
   } catch (error) {
     return handleApiError(error)
   }
 }
 
-// ---- POST: join / leave / signal / chat / chat-delete / check-name
+// ---- POST: ações sociais ou rotas legadas de RTC ---------------------------
 export async function POST(req: Request) {
-  try {
-    const body = readBody(await req.json())
+  const body = readBody(await req.json())
+  const action = body.action
 
-    const action = body.action
+  if (typeof action === 'string' && SOCIAL_ACTIONS.has(action)) {
+    try {
+      const user = await getCurrentUser()
+      if (!user) {
+        throw new UnauthorizedError('Faça login com o Google para usar os amigos.')
+      }
+      const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+      const msg = await handleSocialAction(action, user.id, body, str)
+      return NextResponse.json({ ok: true, message: msg })
+    } catch (error) {
+      const appErr = error instanceof AppError ? error : undefined
+      return NextResponse.json(
+        { ok: false, message: appErr?.message ?? 'Não foi possível' },
+        { status: appErr?.status ?? 400 }
+      )
+    }
+  }
+
+  try {
+    const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
 
     if (action === 'join') {
-      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
       const channel = typeof body.channel === 'string' ? body.channel : 'geral'
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       const photo = typeof body.photo === 'string' ? body.photo : undefined
@@ -102,7 +134,6 @@ export async function POST(req: Request) {
     }
 
     if (action === 'leave') {
-      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       await store.leaveChannel(clientId)
       return ok<{ left: boolean }>({ left: true })
@@ -121,7 +152,6 @@ export async function POST(req: Request) {
     }
 
     if (action === 'screen-kind') {
-      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
       const trackIds = Array.isArray(body.trackIds)
         ? (body.trackIds as unknown[]).filter((t): t is string => typeof t === 'string')
         : []
@@ -174,7 +204,6 @@ export async function POST(req: Request) {
     }
 
     if (action === 'remove-member') {
-      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       return ok<{ removed: Member | undefined }>({
         removed: await store.removeOfflineMember(clientId),
@@ -193,4 +222,52 @@ export async function POST(req: Request) {
   } catch (error) {
     return handleApiError(error)
   }
+}
+
+async function handleSocialAction(
+  action: string,
+  meId: string,
+  body: Record<string, unknown>,
+  str: (v: unknown) => string
+): Promise<string> {
+  const userId = str(body.userId)
+  const fromUserId = str(body.fromUserId)
+  const toUserId = str(body.toUserId)
+  const toCode = str(body.toCode)
+
+  switch (action) {
+    case 'send-request': {
+      await social.sendFriendRequest(meId, {
+        userId: toUserId || undefined,
+        toCode: toCode || undefined,
+      })
+      return 'Convite enviado!'
+    }
+    case 'accept-request': {
+      if (!fromUserId) throw new ValidationError('fromUserId é obrigatório')
+      await social.acceptFriendRequest(meId, fromUserId)
+      return 'Agora vocês são amigos!'
+    }
+    case 'decline-request': {
+      if (!fromUserId) throw new ValidationError('fromUserId é obrigatório')
+      await social.declineFriendRequest(meId, fromUserId)
+      return 'Convite recusado.'
+    }
+    case 'remove-friend': {
+      if (!userId) throw new ValidationError('userId é obrigatório')
+      await social.removeFriend(meId, userId)
+      return 'Amizade encerrada.'
+    }
+    case 'follow': {
+      if (!userId) throw new ValidationError('userId é obrigatório')
+      await social.followUser(meId, userId)
+      return 'Agora você segue esta pessoa.'
+    }
+    case 'unfollow': {
+      if (!userId) throw new ValidationError('userId é obrigatório')
+      await social.unfollowUser(meId, userId)
+      return 'Você deixou de seguir.'
+    }
+  }
+  throw new ValidationError('Ação inválida')
 }

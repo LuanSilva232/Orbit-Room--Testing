@@ -1,109 +1,67 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { getCurrentUser } from '@/lib/auth'
 import { getSql } from '@/db/index'
+import * as social from '@/lib/social'
 
-type Row = Record<string, any>
-
-// Janela de "online": só conta atividade recente, para não marcar quem já saiu como online.
-const ONLINE_WINDOW_MS = 3 * 60 * 1000
-
-// Perfil público de outro usuário para a aba Amigos / popups.
+// Perfil social de outro usuário: relação, listas de amigos/seguidores e presença.
 export async function GET(req: NextRequest) {
-  const targetId = req.nextUrl.searchParams.get('userId') || ''
-  if (!targetId) return NextResponse.json({ ok: false, error: 'USER_REQUIRED' }, { status: 400 })
-
   const user = await getCurrentUser()
-  const sql = getSql()
-
-  const [u] = await sql`
-    SELECT id, display_name, photo, cover, bio FROM users WHERE id = ${targetId} LIMIT 1
-  `
-  if (!u) return NextResponse.json({ ok: false, error: 'NOT_FOUND' }, { status: 404 })
-
-  const [presence] = await sql`
-    SELECT client_id FROM rtc_clients WHERE user_id = ${targetId} AND last_seen > ${Date.now() - ONLINE_WINDOW_MS} LIMIT 1
-  `
-
-  const friends = await sql`
-    SELECT u2.id, u2.display_name, u2.photo, r.channel AS online_channel, r.client_id
-    FROM social_friends sf
-    JOIN users u2 ON u2.id = CASE WHEN sf.user_a = ${targetId} THEN sf.user_b ELSE sf.user_a END
-    LEFT JOIN rtc_clients r ON r.user_id = u2.id AND r.last_seen > ${Date.now() - ONLINE_WINDOW_MS}
-    WHERE sf.user_a = ${targetId} OR sf.user_b = ${targetId}
-    ORDER BY u2.display_name LIMIT 60
-  `
-  const followers = await sql`
-    SELECT u2.id, u2.display_name, u2.photo FROM social_follows f JOIN users u2 ON u2.id = f.follower_id
-    WHERE f.followee_id = ${targetId} ORDER BY f.created_at DESC LIMIT 60
-  `
-  const following = await sql`
-    SELECT u2.id, u2.display_name, u2.photo FROM social_follows f JOIN users u2 ON u2.id = f.followee_id
-    WHERE f.follower_id = ${targetId} ORDER BY f.created_at DESC LIMIT 60
-  `
-
-  // Relação com quem está vendo (se logado).
-  const relation = {
-    isFriend: false,
-    isFollowing: false,
-    isSelf: false,
+  if (!user) {
+    return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
   }
-  if (user && user.id !== targetId) {
-    const [fr] = await sql`
-      SELECT 1 AS x FROM social_friends
-      WHERE (user_a = ${user.id} AND user_b = ${targetId}) OR (user_a = ${targetId} AND user_b = ${user.id}) LIMIT 1
-    `
-    const [fw] = await sql`
-      SELECT 1 AS y FROM social_follows WHERE follower_id = ${user.id} AND followee_id = ${targetId} LIMIT 1
-    `
-    relation.isFriend = !!fr
-    relation.isFollowing = !!fw
-  } else if (user && user.id === targetId) {
-    relation.isSelf = true
+  const url = new URL(req.url)
+  const userId = url.searchParams.get('userId') ?? ''
+  if (!userId) {
+    return NextResponse.json({ error: 'INVALID_INPUT' }, { status: 400 })
+  }
+  try {
+    return NextResponse.json(await social.getTargetSocial(user.id, userId))
+  } catch (error) {
+    const status = error instanceof Error && 'status' in error ? Number((error as { status?: number }).status) : 500
+    const message = error instanceof Error ? error.message : 'Erro interno'
+    return NextResponse.json({ error: message }, { status: Number.isFinite(status) ? status : 500 })
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  const user = await getCurrentUser()
+  if (!user) {
+    return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
   }
 
-  // Estado do convite de amizade entre quem vê e o dono do perfil.
-  let requestStatus: 'sent' | 'received' | null = null
-  if (user && user.id !== targetId) {
-    const [req] = await sql<{ from_id: string }[]>`
-      SELECT from_id FROM social_requests
-      WHERE status = 'pending'
-        AND ((from_id = ${user.id} AND to_id = ${targetId}) OR (from_id = ${targetId} AND to_id = ${user.id}))
-      LIMIT 1
-    `
-    if (req) requestStatus = req.from_id === user.id ? 'sent' : 'received'
+  let body: {
+    name?: string
+    bio?: string
+    photo?: string
+    cover?: string
+    rooms?: unknown[]
+  }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'INVALID_INPUT' }, { status: 400 })
   }
 
-  // Privacidade: só amigos (ou o próprio perfil) enxergam as LISTAS de amigos/
-  // seguidores/seguindo. Para os demais, apenas os números ficam visíveis.
-  const canSeeLists = relation.isSelf || relation.isFriend
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 60) : user.name
+  const bio = typeof body.bio === 'string' ? body.bio.trim().slice(0, 240) : (user.bio ?? null)
+  const photo = typeof body.photo === 'string' ? body.photo : (user.photo ?? null)
+  const cover = typeof body.cover === 'string' ? body.cover : (user.cover ?? null)
+  const rooms = Array.isArray(body.rooms) ? body.rooms : user.rooms
 
-  const mapBasic = (r: Row) => ({ id: r.id, name: r.display_name, photo: r.photo ?? null })
+  if (!name) {
+    return NextResponse.json({ error: 'NAME_REQUIRED' }, { status: 400 })
+  }
 
-  return NextResponse.json({
-    ok: true,
-    user: {
-      id: u.id,
-      name: u.display_name || 'Usuário',
-      photo: u.photo ?? null,
-      cover: u.cover ?? null,
-      bio: u.bio ?? null,
-      online: !!presence?.client_id,
-    },
-    relation,
-    requestStatus,
-    friendsCount: friends.length,
-    followersCount: followers.length,
-    followingCount: following.length,
-    friends: canSeeLists
-      ? friends.map((r: Row) => ({
-          id: r.id,
-          name: r.display_name,
-          photo: r.photo ?? null,
-          online: typeof r.client_id === 'string',
-          channelId: r.online_channel ?? null,
-        }))
-      : [],
-    followers: canSeeLists ? followers.map(mapBasic) : [],
-    following: canSeeLists ? following.map(mapBasic) : [],
-  })
+  await getSql()`
+    UPDATE users
+    SET display_name = ${name},
+        bio = ${bio},
+        photo = ${photo},
+        cover = ${cover},
+        rooms = ${JSON.stringify(rooms)}::jsonb,
+        updated_at = ${Date.now()}
+    WHERE id = ${user.id}
+  `
+
+  return NextResponse.json({ ok: true, profile: { name, bio, photo, cover, rooms } })
 }
