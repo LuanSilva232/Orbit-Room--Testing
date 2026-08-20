@@ -2895,7 +2895,7 @@ export function ShareRoom() {
 
           {/* Menu lateral — mobile (lista quando acessa o menu) */}
           <div
-            className={`flex flex-col gap-3 overflow-y-auto no-scrollbar p-4 pb-28 lg:hidden ${
+            className={`flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto no-scrollbar p-4 pb-28 lg:hidden ${
               configPane === 'menu' ? '' : 'hidden'
             }`}
           >
@@ -3839,3 +3839,4 @@ export function ShareRoom() {
     </div>
   )
 }
+
