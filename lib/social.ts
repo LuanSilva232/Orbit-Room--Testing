@@ -191,7 +191,7 @@ export type TargetSocial = {
 }
 
 export async function getTargetSocial(meId: string, targetId: string): Promise<TargetSocial> {
-  const target = await requireUser(targetId)
+  await requireUser(targetId) // valida que o usuário existe
   const isSelf = meId === targetId
 
   const [[friendRel], [followRel], [sentRel], [receivedRel], friends, followers, following] =

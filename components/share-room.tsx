@@ -1,7 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast, Toaster } from 'sonner'
 
 import { deviceAuthed, setDeviceAuthed } from './consent-banner'
@@ -339,7 +338,6 @@ function DeleteCountdown({ until }: { until: number }) {
 }
 
 export function ShareRoom() {
-  const router = useRouter()
   const [clientId, setClientId] = useState('')
   const [name, setName] = useState('')
   const [channel, setChannel] = useState<ChannelId>('geral')
@@ -1105,7 +1103,7 @@ export function ShareRoom() {
     void poll()
     })()
     return teardown
-  }, [sendSignalBody, settings.notifications, registerPresence])
+  }, [sendSignalBody, settings.notifications, registerPresence, t])
 
   // ----- conta: carrega o usuário logado e o perfil salvo no servidor -----
   useEffect(() => {
@@ -1461,7 +1459,7 @@ export function ShareRoom() {
     } else {
       toast.error('Não foi possível apagar as conversas')
     }
-  }, [])
+  }, [t])
 
   // ----- voice recording -----
   const stopRecording = useCallback(() => {
@@ -1715,6 +1713,7 @@ export function ShareRoom() {
   }, [isAdmin, offlineMembers])
 
   // ----- grelha (layout dinâmico) -----
+  const tiles = useMemo<Tile[]>(() => {
   const tiles: Tile[] = []
   if (inCall) {
     const localStream = localStreamRef.current
@@ -1785,6 +1784,8 @@ export function ShareRoom() {
       }
     }
   }
+    return tiles
+  }, [inCall, camOn, name, screenStreaming, remotePeers, mutedPeers, isAdmin, demoScreens])
 
   // Ordena as telas compartilhadas por ordem de ativação (quem começou primeiro).
   const allScreenTiles = tiles.filter((t) => t.isScreen)
@@ -2004,7 +2005,6 @@ export function ShareRoom() {
       }
     }, 140)
     return () => window.clearInterval(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tiles, micOn, mutedPeers])
 
   const renderMain = () => {
