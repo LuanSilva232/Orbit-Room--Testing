@@ -16,6 +16,7 @@ import { AppError } from '@/lib/errors'
 // serverless (Vercel), onde cada requisição pode cair numa instância diferente
 // e o estado precisa ser compartilhado/centralizado.
 export const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline
+export const PRESENT_MS = 3 * 60 * 1000 // 3min sem batimento = não está mais na sala/call (evita "fantasmas")
 export const SOLO_KICK_MS = 5 * 60 * 1000 // 5min sozinho no canal = sai do canal automaticamente
 export const ANON_MSG_MS = 24 * 60 * 60 * 1000 // mensagens de anônimos somem após 24h
 export const LOGGED_MSG_MS = 48 * 60 * 60 * 1000 // mensagens de contas logadas somem após 48h
@@ -76,7 +77,7 @@ async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
   return getSql()<ClientRow[]>`
     SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
     FROM rtc_clients
-    WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+    WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - PRESENT_MS}
   `
 }
 
@@ -211,7 +212,7 @@ export async function onlineMembers(): Promise<Member[]> {
   await runMaintenance()
   const rows = await getSql()<ClientRow[]>`
     SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
-    FROM rtc_clients WHERE last_seen > ${nowMs() - OFFLINE_MS}
+    FROM rtc_clients WHERE last_seen > ${nowMs() - PRESENT_MS}
   `
   return rows.map(toMember)
 }
@@ -556,7 +557,7 @@ async function refreshSoloState(channel: ChannelId): Promise<void> {
   } else {
     await sql`
       UPDATE rtc_clients SET single_since = NULL
-      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - PRESENT_MS}
     `
   }
 }

@@ -2000,9 +2000,10 @@ export function ShareRoom() {
                 <div className="space-y-1.5 overflow-y-auto">
                 {DEFAULT_CHANNELS.map((c) => {
                   const active = inCall && channel === c.id
-                  const count = onlineMembers.filter(
-                    (m) => m.channel === c.id && m.clientId !== clientId
-                  ).length
+                  const count = Math.min(
+                    onlineMembers.filter((m) => m.channel === c.id).length,
+                    10
+                  )
                   return (
                     <button
                       key={c.id}
@@ -2015,7 +2016,9 @@ export function ShareRoom() {
                     >
                       <span className="text-base">{active ? '🔊' : '🔈'}</span>
                       <span className="flex-1 truncate">{c.label}</span>
-                      <span className="text-[10px] text-slate-400">{count} online</span>
+                      <span className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-300">
+                        {count}/10
+                      </span>
                     </button>
                   )
                 })}
