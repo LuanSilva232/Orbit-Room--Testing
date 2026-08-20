@@ -307,8 +307,8 @@ const STRINGS = {
   noiseLabel: ['Ruído', 'Noise'],
   echoLabel: ['Eco', 'Echo'],
   aboutText: [
-    'Orbit Room é um aplicativo de canais de voz e vídeo onde você entra em salas para conversar com outras pessoas em tempo real. Dentro de cada sala dá para falar pelo microfone, ligar a câmera, compartilhar a tela e trocar mensagens de texto com quem está online.\n\nFeito para reunir pessoas: entre numa sala, veja quem está por lá, converse à vontade e, se quiser, compartilhe o que está vendo. O Orbit Room nasceu para aproximar pessoas e facilitar conversas ao vivo — do jeito mais simples e direto.',
-    'Orbit Room is a voice and video channels app where you join rooms to talk with other people in real time. Inside each room you can speak through the mic, turn on your camera, share your screen, and exchange text messages with whoever is online.\n\nMade to bring people together: join a room, see who is there, chat freely and, if you like, share what you are seeing. Orbit Room was created to bring people closer and make live conversations easy — in the simplest, most direct way.',
+    'O Orbit Room é uma plataforma de conversas ao vivo em voz e vídeo, criada para aproximar pessoas e reunir todo mundo em salas compartilhadas em tempo real — não importa a distância.\n\n#Por que o Orbit Room existe?\n\nEstamos sempre conectados, mas muitas vezes distantes. O Orbit Room nasceu para devolver ao mundo digital o calor de uma conversa cara a cara: um lugar simples em que basta entrar numa sala para se sentir junto de verdade.\n\n• Reunir pessoas ao redor de uma conversa viva, sem fricção\n• Trazer de volta a sensação de “estar na mesma sala”, de qualquer lugar\n• Tornar as conversas reais acessíveis e naturais para todos\n\nMais do que um aplicativo de chamadas, é um espaço de presença e conexão — feito para quem quer conversar, e não apenas conectar.',
+    'Orbit Room is a live voice and video conversation platform, created to bring people together and gather everyone in shared rooms in real time — no matter the distance.\n\n#Why does Orbit Room exist?\n\nWe are always connected, yet often distant. Orbit Room was born to bring the warmth of a face-to-face conversation back to the digital world: a simple place where you just join a room to truly feel together.\n\n• Bring people together around a living conversation, without friction\n• Bring back the feeling of “being in the same room”, from anywhere\n• Make real conversations accessible and natural for everyone\n\nMore than a calling app, it is a space for presence and connection — made for those who want to talk, not just connect.',
   ],
   aboutCredits: ['Criado por Noah · v0.5', 'Created by Noah · v0.5'],
 } as const
@@ -3537,11 +3537,46 @@ export function ShareRoom() {
                 </div>
                 {t('aboutText')
                   .split('\n\n')
-                  .map((p) => (
-                    <p key={p.slice(0, 20)} className="text-sm leading-relaxed text-slate-300">
-                      {p}
-                    </p>
-                  ))}
+                  .map((block, i) => {
+                    if (block.startsWith('#')) {
+                      return (
+                        <h5
+                          key={i}
+                          className="mb-1 mt-4 text-[12px] font-extrabold uppercase tracking-[0.14em] text-indigo-300"
+                        >
+                          {block.slice(1)}
+                        </h5>
+                      )
+                    }
+                    if (block.includes('•')) {
+                      const items = block.split('\n').filter(Boolean)
+                      return (
+                        <ul key={i} className="mt-2 space-y-2">
+                          {items.map((li) => (
+                            <li
+                              key={li}
+                              className="flex items-start gap-2.5 text-sm leading-relaxed text-slate-300"
+                            >
+                              <span className="mt-[7px] h-1.5 w-1.5 flex-none rounded-full bg-gradient-to-br from-indigo-400 to-cyan-400" />
+                              <span>{li.replace(/^•\s*/, '')}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )
+                    }
+                    return (
+                      <p
+                        key={i}
+                        className={`leading-relaxed text-slate-300 ${
+                          i === 0
+                            ? 'text-[15px] font-medium text-slate-200'
+                            : 'text-sm'
+                        }`}
+                      >
+                        {block}
+                      </p>
+                    )
+                  })}
                 <p className="mt-3 border-t border-white/10 pt-2 text-[11px] font-medium text-slate-400">
                   {t('aboutCredits')}
                 </p>
@@ -4011,4 +4046,5 @@ export function ShareRoom() {
     </div>
   )
 }
+
 
