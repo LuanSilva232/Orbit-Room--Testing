@@ -206,6 +206,19 @@ export function ensureDb(): Promise<void> {
           ON rooms (is_private)
       `
       await sql`
+        CREATE TABLE IF NOT EXISTS room_invites (
+          id         text PRIMARY KEY,
+          room_id    text NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+          from_id    text NOT NULL,
+          to_id      text NOT NULL,
+          created_at bigint NOT NULL
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS room_invites_to_idx
+          ON room_invites (to_id, created_at)
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS oauth_accounts (
           id                 text PRIMARY KEY,
           user_id            text NOT NULL REFERENCES users(id) ON DELETE CASCADE,

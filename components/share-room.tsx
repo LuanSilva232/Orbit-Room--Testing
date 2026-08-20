@@ -18,6 +18,7 @@ import {
   type Quality,
   QUALITY_OPTIONS,
   type Room,
+  type RoomInvite,
   type SignalKind,
 } from '@/lib/rtc/types'
 
@@ -409,6 +410,8 @@ export function ShareRoom() {
   // ---- Salas personalizadas ----
   const [rooms, setRooms] = useState<Room[]>([]) // salas públicas de todos
   const [myRooms, setMyRooms] = useState<Room[]>([]) // salas que criei
+  const [privateRooms, setPrivateRooms] = useState<Room[]>([]) // salas privadas (de todos, ocupadas)
+  const [roomInvites, setRoomInvites] = useState<RoomInvite[]>([]) // convites de sala recebidos
   const [newRoomName, setNewRoomName] = useState('')
   const [newRoomPrivate, setNewRoomPrivate] = useState(false)
   const [newRoomPassword, setNewRoomPassword] = useState('')
@@ -425,12 +428,16 @@ export function ShareRoom() {
   const roomLabelsRef = useRef<Record<string, string>>({})
 
   const loadRooms = useCallback(async () => {
-    const [pub, mine] = await Promise.all([
+    const [pub, priv, mine, inv] = await Promise.all([
       apiClient.get<{ rooms: Room[] }>('/api/rooms'),
+      apiClient.get<{ rooms: Room[] }>('/api/rooms?private=1'),
       apiClient.get<{ rooms: Room[] }>('/api/rooms?mine=1'),
+      apiClient.get<{ roomInvites: RoomInvite[] }>('/api/rooms?invites=1'),
     ])
     if (pub.success) setRooms(pub.data.rooms)
+    if (priv.success) setPrivateRooms(priv.data.rooms)
     if (mine.success) setMyRooms(mine.data.rooms)
+    if (inv.success) setRoomInvites(inv.data.roomInvites)
   }, [])
 
   useEffect(() => {
@@ -441,6 +448,9 @@ export function ShareRoom() {
 
   useEffect(() => {
     void loadRooms()
+    // Atualiza periodicamente para refletir quem entrou/saiu e convites novos.
+    const id = setInterval(() => void loadRooms(), 8000)
+    return () => clearInterval(id)
   }, [loadRooms])
 
   const createRoom = useCallback(async () => {
@@ -1228,9 +1238,11 @@ export function ShareRoom() {
   )
 
   // Abre uma sala: pede senha se for privada, senão entra direto.
+  // Quem tem convite ativo entra sem pedir senha.
   const openRoom = useCallback(
     (room: Room) => {
-      if (room.hasPassword) {
+      const invited = roomInvites.some((i) => i.roomId === room.id)
+      if (room.hasPassword && !invited) {
         setJoinPasswordRoom(room)
         setJoinPasswordValue('')
         setJoinPasswordOpen(true)
@@ -1238,7 +1250,7 @@ export function ShareRoom() {
         void joinChannel(room.id)
       }
     },
-    [joinChannel]
+    [joinChannel, roomInvites]
   )
   const submitJoinPassword = useCallback(async () => {
     if (!joinPasswordRoom) return
@@ -1261,6 +1273,26 @@ export function ShareRoom() {
       setInviteLoading(false)
     }
   }, [])
+
+  const [inviteSending, setInviteSending] = useState<string | null>(null)
+  const sendRoomInvite = useCallback(async (friendId: string) => {
+    if (!inviteRoom) return
+    setInviteSending(friendId)
+    try {
+      const res = await apiClient.post('/api/rooms/invite', {
+        roomId: inviteRoom.id,
+        toUserId: friendId,
+      })
+      if (res.success) {
+        toast.success('Convite enviado!')
+        setInviteRoom(null)
+      } else {
+        toast.error(res.error || 'Não foi possível enviar o convite.')
+      }
+    } finally {
+      setInviteSending(null)
+    }
+  }, [inviteRoom])
 
   const leaveChannel = useCallback(() => {
     engineRef.current?.closeAll()
@@ -2279,21 +2311,21 @@ export function ShareRoom() {
             ) : inicioView === 'privadas' ? (
               <div className="mt-3 flex min-h-0 flex-1 flex-col">
                 <p className="mb-2 text-center text-xs font-medium text-slate-400">
-                  Suas salas privadas, protegidas por senha.
+                  Salas privadas com pessoas dentro agora. Para entrar, você precisa ser convidado.
                 </p>
                 <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
                   {!authUser ? (
                     <div className="flex flex-1 flex-col items-center justify-center text-center">
                       <span className="text-4xl">🔒</span>
                       <p className="mt-3 text-sm text-slate-400">
-                        Faça login com o Google para ver suas salas.
+                        Faça login com o Google para ver as salas privadas.
                       </p>
                     </div>
-                  ) : myRooms.filter((r) => r.isPrivate).length === 0 ? (
+                  ) : privateRooms.length === 0 ? (
                     <div className="flex flex-col items-center justify-center pt-10 text-center">
                       <span className="text-4xl">📁</span>
                       <p className="mt-3 text-sm text-slate-400">
-                        Você ainda não tem salas privadas.
+                        Nenhuma sala privada ocupada no momento.
                       </p>
                       <button
                         onClick={() => setInicioView('criar')}
@@ -2303,8 +2335,7 @@ export function ShareRoom() {
                       </button>
                     </div>
                   ) : (
-                    myRooms
-                      .filter((r) => r.isPrivate)
+                    privateRooms
                       .map((room) => {
                         const active = inCall && channel === room.id
                         const count = Math.min(
@@ -3196,14 +3227,58 @@ export function ShareRoom() {
                     {/* Convites de sala: entrar em salas de amigos sem senha */}
                     <section className="share-panel-soft rounded-xl p-3">
                       <h4 className="mb-2 text-sm font-bold">📨 Convites de sala</h4>
-                      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/5 p-4 text-center">
-                        <span className="text-2xl">💌</span>
-                        <p className="text-xs text-slate-400">Você ainda não tem convites de sala.</p>
-                        <p className="max-w-xs text-[10px] leading-snug text-slate-500">
-                          Quando um amigo te convidar, a sala aparecerá aqui e você poderá entrar
-                          sem precisar de senha.
-                        </p>
-                      </div>
+                      {roomInvites.length === 0 ? (
+                        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/5 p-4 text-center">
+                          <span className="text-2xl">💌</span>
+                          <p className="text-xs text-slate-400">Você ainda não tem convites de sala.</p>
+                          <p className="max-w-xs text-[10px] leading-snug text-slate-500">
+                            Quando um amigo te convidar, a sala aparecerá aqui e você poderá entrar
+                            sem precisar de senha.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {roomInvites.map((inv) => (
+                            <div
+                              key={inv.id}
+                              className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2"
+                            >
+                              {inv.fromPhoto ? (
+                                <img src={inv.fromPhoto} alt="" className="h-8 w-8 rounded-full object-cover" />
+                              ) : (
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-500/30 text-sm font-bold">
+                                  {(inv.fromName || '?')[0]}
+                                </span>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-semibold text-slate-200">
+                                  {inv.fromName} convidou para &quot;{inv.roomName}&quot;
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                  {inv.isPrivate ? '🔒 Sala privada' : '🌐 Sala pública'}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => void joinChannel(inv.roomId)}
+                                className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
+                              >
+                                Entrar na sala
+                              </button>
+                              <button
+                                onClick={() => {
+                                  void apiClient
+                                    .delete(`/api/rooms/invite?roomId=${encodeURIComponent(inv.roomId)}`)
+                                    .then(() => void loadRooms())
+                                }}
+                                className="shrink-0 rounded-lg bg-white/5 px-2 py-1.5 text-xs font-medium text-slate-400 ring-1 ring-white/10 transition hover:bg-white/10"
+                                title="Recusar"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </section>
                   </>
                 ) : (
@@ -3741,11 +3816,11 @@ export function ShareRoom() {
                       </p>
                     </div>
                     <button
-                      disabled
-                      title="Convite ainda não disponível"
-                      className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30"
+                      onClick={() => void sendRoomInvite(f.id)}
+                      disabled={inviteSending === f.id}
+                      className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30 disabled:opacity-50"
                     >
-                      Convidar
+                      {inviteSending === f.id ? '...' : 'Convidar'}
                     </button>
                   </div>
                 ))

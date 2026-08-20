@@ -8,17 +8,29 @@ import * as store from '@/lib/rtc/store'
 
 export const runtime = 'nodejs'
 
-// GET /api/rooms        -> salas públicas
-// GET /api/rooms?mine=1 -> salas do usuário logado
+// GET /api/rooms            -> salas públicas (ocupadas)
+// GET /api/rooms?mine=1     -> salas do usuário logado
+// GET /api/rooms?private=1  -> salas privadas (ocupadas)
+// GET /api/rooms?invites=1  -> convites de sala do usuário logado
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url)
     const mine = url.searchParams.get('mine') === '1'
-    if (mine) {
+    const priv = url.searchParams.get('private') === '1'
+    const invites = url.searchParams.get('invites') === '1'
+    if (mine || priv || invites) {
       const user = await getCurrentUser()
       if (!user) throw new AppError('Faça login para ver suas salas.', 401, 'UNAUTHORIZED')
-      const rooms: Room[] = await store.listMyRooms(user.id)
-      return NextResponse.json({ success: true, data: { rooms } })
+      if (mine) {
+        const rooms: Room[] = await store.listMyRooms(user.id)
+        return NextResponse.json({ success: true, data: { rooms } })
+      }
+      if (priv) {
+        const rooms: Room[] = await store.listPrivateRooms()
+        return NextResponse.json({ success: true, data: { rooms } })
+      }
+      const roomInvites = await store.listRoomInvites(user.id)
+      return NextResponse.json({ success: true, data: { roomInvites } })
     }
     const rooms: Room[] = await store.listPublicRooms()
     return NextResponse.json({ success: true, data: { rooms } })

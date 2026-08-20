@@ -24,6 +24,18 @@ export type Room = {
   ownerPhoto?: string
 }
 
+export type RoomInvite = {
+  id: string
+  roomId: string
+  roomName: string
+  isPrivate: boolean
+  hasPassword: boolean
+  fromId: string
+  fromName: string
+  fromPhoto: string | null
+  createdAt: number
+}
+
 export type SignalKind = 'offer' | 'answer' | 'ice'
 
 export type Profile = {

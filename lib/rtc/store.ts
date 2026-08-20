@@ -7,6 +7,7 @@ import type {
   MailboxMessage,
   Member,
   Room,
+  RoomInvite,
   SignalKind,
 } from './types'
 import { ensureDb, getSql } from '@/db'
@@ -286,15 +287,30 @@ export async function roomById(id: string): Promise<Room | undefined> {
   return row ? toRoom(row) : undefined
 }
 
-export async function listPublicRooms(): Promise<Room[]> {
+// Lista salas que têm ao menos uma pessoa presente agora (a última a sair tira
+// a sala da lista; ela continua no painel "Minhas salas" do dono).
+async function listOccupiedRooms(isPrivate: boolean): Promise<Room[]> {
   await ensureDb()
   const rows = await getSql()<RoomRow[]>`
     SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at,
            u.display_name AS owner_name, u.photo AS owner_photo
     FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
-    WHERE NOT r.is_private ORDER BY r.created_at DESC
+    WHERE r.is_private = ${isPrivate}
+      AND EXISTS (
+        SELECT 1 FROM rtc_clients c
+        WHERE c.channel = r.id AND c.left_at IS NULL
+      )
+    ORDER BY r.created_at DESC
   `
   return rows.map(toRoom)
+}
+
+export async function listPublicRooms(): Promise<Room[]> {
+  return listOccupiedRooms(false)
+}
+
+export async function listPrivateRooms(): Promise<Room[]> {
+  return listOccupiedRooms(true)
 }
 
 export async function listMyRooms(userId: string): Promise<Room[]> {
@@ -330,6 +346,78 @@ export async function createRoom(
     createdAt: now,
     hasPassword: Boolean(pwd),
   }
+}
+
+// --- Convites de sala ---
+
+export async function sendRoomInvite(
+  fromUserId: string,
+  roomId: string,
+  toUserId: string
+): Promise<void> {
+  await ensureDb()
+  const room = await roomRowWithPassword(roomId)
+  if (!room) throw new AppError('Sala não encontrada.', 404, 'ROOM_NOT_FOUND')
+  const target = await getSql()<{ id: string }[]>`SELECT id FROM users WHERE id = ${toUserId}`
+  if (target.length === 0) throw new AppError('Destinatário não encontrado.', 404, 'USER_NOT_FOUND')
+  if (fromUserId === toUserId) throw new AppError('Você não pode se convidar.', 400, 'SELF_INVITE')
+  const id = 'rinv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+  await getSql()`
+    INSERT INTO room_invites (id, room_id, from_id, to_id, created_at)
+    VALUES (${id}, ${roomId}, ${fromUserId}, ${toUserId}, ${nowMs()})
+    ON CONFLICT DO NOTHING
+  `
+}
+
+export async function listRoomInvites(toUserId: string): Promise<RoomInvite[]> {
+  await ensureDb()
+  type InviteRow = {
+    id: string
+    room_id: string
+    from_id: string
+    created_at: string | number
+    room_name: string
+    is_private: boolean
+    password: string | null
+    from_name: string | null
+    from_photo: string | null
+  }
+  const rows = await getSql()<InviteRow[]>`
+    SELECT i.id, i.room_id, i.from_id, i.created_at,
+           r.name AS room_name, r.is_private, r.password,
+           u.display_name AS from_name, u.photo AS from_photo
+    FROM room_invites i
+    JOIN rooms r ON r.id = i.room_id
+    JOIN users u ON u.id = i.from_id
+    WHERE i.to_id = ${toUserId}
+    ORDER BY i.created_at DESC
+  `
+  return rows.map((r) => ({
+    id: r.id,
+    roomId: r.room_id,
+    roomName: r.room_name,
+    isPrivate: r.is_private,
+    hasPassword: r.password != null && r.password.length > 0,
+    fromId: r.from_id,
+    fromName: r.from_name ?? 'Usuário',
+    fromPhoto: r.from_photo,
+    createdAt: Number(r.created_at),
+  }))
+}
+
+/** Verifica se o usuário tem um convite ativo para a sala (permite entrar sem senha). */
+export async function hasRoomInvite(roomId: string, userId: string): Promise<boolean> {
+  await ensureDb()
+  const rows = await getSql()<{ id: string }[]>`
+    SELECT id FROM room_invites WHERE room_id = ${roomId} AND to_id = ${userId} LIMIT 1
+  `
+  return rows.length > 0
+}
+
+/** Remove os convites de uma sala para um usuário (usado ao entrar via convite). */
+export async function clearRoomInvites(roomId: string, userId: string): Promise<void> {
+  await ensureDb()
+  await getSql()`DELETE FROM room_invites WHERE room_id = ${roomId} AND to_id = ${userId}`
 }
 
 // Exclui uma sala (somente o dono). Quem estiver nela volta para o saguão.
@@ -406,19 +494,27 @@ export async function joinChannel(
   const previous = await getClientRow(clientId)
 
   // Salas personalizadas: precisam existir e, se forem privadas, exigem senha
-  // (ou, sem senha definida, só o dono entra). Convites futuros burlam a senha.
+  // (ou, sem senha definida, só o dono entra). Convidados entram sem senha.
   if (!FIXED_CHANNELS.includes(channel)) {
     const row = await roomRowWithPassword(channel)
     if (!row) throw new AppError('Sala não encontrada.', 404, 'ROOM_NOT_FOUND')
     if (row.is_private) {
-      if (!row.password) {
-        if (row.owner_id !== userId) {
-          throw new AppError('Esta sala é privada e só o dono pode entrar.', 403, 'ROOM_PRIVATE')
+      const invited = userId ? await hasRoomInvite(channel, userId) : false
+      if (!invited) {
+        if (!row.password) {
+          if (row.owner_id !== userId) {
+            throw new AppError('Esta sala é privada e só o dono pode entrar.', 403, 'ROOM_PRIVATE')
+          }
+        } else if (password?.trim() !== row.password) {
+          throw new AppError('Senha incorreta. Verifique e tente de novo.', 403, 'ROOM_PASSWORD')
         }
-      } else if (password?.trim() !== row.password) {
-        throw new AppError('Senha incorreta. Verifique e tente de novo.', 403, 'ROOM_PASSWORD')
       }
     }
+  }
+
+  // Convidado que conseguiu entrar: o convite foi usado, remove-o.
+  if (userId && !FIXED_CHANNELS.includes(channel)) {
+    await clearRoomInvites(channel, userId)
   }
 
   // Limite por sala pública (para não sobrecarregar a sala de voz).
