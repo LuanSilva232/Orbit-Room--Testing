@@ -3031,6 +3031,7 @@ export function ShareRoom() {
                   <button
                     onClick={() => {
                       setEditProfileOpen(true)
+                      setConfigOpen(false)
                       setMobileTab('inicio')
                     }}
                     className="w-full rounded-xl bg-indigo-500/20 px-4 py-3 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/30"
@@ -3237,7 +3238,7 @@ export function ShareRoom() {
                           </p>
                         </div>
                       ) : (
-                        <div className="space-y-1.5">
+                        <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
                           {roomInvites.map((inv) => (
                             <div
                               key={inv.id}
