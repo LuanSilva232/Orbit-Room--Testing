@@ -84,3 +84,4 @@ export function FriendMoreMenu({ userId, isFollowing, canRemove, onOpenProfile, 
     </div>
   )
 }
+
