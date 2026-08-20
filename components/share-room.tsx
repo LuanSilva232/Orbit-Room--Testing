@@ -2981,7 +2981,7 @@ export function ShareRoom() {
 
           {/* Conteúdo da categoria selecionada */}
           <div
-            className={`min-h-0 flex-1 flex-col overflow-hidden ${
+            className={`min-h-0 flex-1 flex-col overflow-y-auto no-scrollbar ${
               configPane === 'menu' ? 'hidden lg:flex' : 'mt-4 flex lg:mt-0'
             }`}
           >
@@ -3000,7 +3000,7 @@ export function ShareRoom() {
                 ✕ {t('close')}
               </button>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto no-scrollbar pb-28 lg:p-5">
+            <div className="flex flex-col gap-3 pb-28 lg:p-5">
               {configPane === 'menu' && (
                 <div className="hidden flex-1 items-center justify-center rounded-xl share-panel-soft p-6 text-center lg:flex">
                   <div>
@@ -3839,5 +3839,4 @@ export function ShareRoom() {
     </div>
   )
 }
-
 
