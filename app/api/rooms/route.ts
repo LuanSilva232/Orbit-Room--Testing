@@ -47,6 +47,7 @@ export async function POST(req: Request) {
     const name = typeof body?.name === 'string' ? body.name.trim() : ''
     const isPrivate = body?.isPrivate === true
     const password = typeof body?.password === 'string' ? body.password.trim() : ''
+    const capacity = normalizeCapacity(body?.capacity)
     if (!name) throw new ValidationError('Digite um nome para a sala.')
     if (name.length > 30) throw new ValidationError('O nome da sala pode ter no máximo 30 caracteres.')
     if (isPrivate && !password) {
@@ -55,7 +56,40 @@ export async function POST(req: Request) {
     if (password && password.length > 30) {
       throw new ValidationError('A senha pode ter no máximo 30 caracteres.')
     }
-    const room: Room = await store.createRoom(name, isPrivate, user.id, password || undefined)
+    const room: Room = await store.createRoom(name, isPrivate, user.id, password || undefined, capacity)
+    return NextResponse.json({ success: true, data: { room } })
+  } catch (error) {
+    return handleApiError(error)
+  }
+}
+
+function normalizeCapacity(v: unknown): number {
+  if (typeof v === 'number') return [4, 8, 16].includes(v) ? v : 0
+  if (typeof v === 'string') {
+    const n = Number(v)
+    return [4, 8, 16].includes(n) ? n : 0
+  }
+  return 0
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const user = await getCurrentUser()
+    if (!user) throw new AppError('Faça login para editar uma sala.', 401, 'UNAUTHORIZED')
+    const body = await req.json()
+    const id = typeof body?.id === 'string' ? body.id.trim() : ''
+    if (!id) throw new ValidationError('id é obrigatório')
+    const name = typeof body?.name === 'string' ? body.name.trim() : ''
+    if (!name) throw new ValidationError('Digite um nome para a sala.')
+    if (name.length > 30) throw new ValidationError('O nome da sala pode ter no máximo 30 caracteres.')
+    const isPrivate = body?.isPrivate === true
+    const password = typeof body?.password === 'string' ? body.password.trim() : ''
+    if (password && password.length > 30) {
+      throw new ValidationError('A senha pode ter no máximo 30 caracteres.')
+    }
+    const capacity = normalizeCapacity(body?.capacity)
+    const room = await store.updateRoom(id, user.id, { name, isPrivate, password, capacity })
+    if (!room) throw new AppError('Sala não encontrada ou sem permissão.', 404, 'ROOM_NOT_FOUND')
     return NextResponse.json({ success: true, data: { room } })
   } catch (error) {
     return handleApiError(error)
