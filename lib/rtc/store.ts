@@ -19,7 +19,7 @@ import { AppError } from '@/lib/errors'
 // e o estado precisa ser compartilhado/centralizado.
 export const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline
 export const PRESENT_MS = 3 * 60 * 1000 // 3min sem batimento = não está mais na sala/call (evita "fantasmas")
-export const SOLO_KICK_MS = 5 * 60 * 1000 // 5min sozinho no canal = sai do canal automaticamente
+export const SOLO_KICK_MS = 5 * 60 * 1000 // 5min sozinho na sala = sai do canal automaticamente (oculto)
 export const ANON_MSG_MS = 24 * 60 * 60 * 1000 // mensagens de anônimos somem após 24h
 export const LOGGED_MSG_MS = 48 * 60 * 60 * 1000 // mensagens de contas logadas somem após 48h
 export const ANON_OFFLINE_MS = 15 * 24 * 60 * 60 * 1000 // anônimo offline é apagado após 15 dias (cache temporário)
@@ -707,7 +707,7 @@ export async function broadcastScreenKind(clientId: string, trackIds: string[]):
 export async function drainMailbox(clientId: string): Promise<MailboxMessage[]> {
   await ensureDb()
   await runMaintenance()
-  // Se estiver sozinho há 5min+, sai do canal automaticamente (o aviso entra na caixa).
+  // Libera a vaga de quem está SOZINHO na sala há 5min (oculto, sem aviso).
   await maybeKickSolo(clientId)
   const sql = getSql()
   const rows = await sql<{ id: string; payload: Record<string, unknown> }[]>`
@@ -818,10 +818,12 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
 }
 
 /**
- * Recalcula o estado "sozinho" de um canal após alguém entrar ou sair.
+ * Recalcula o estado "sozinho" de uma sala após alguém entrar ou sair.
  * - Se sobrar exatamente 1 pessoa, marca o instante em que ela ficou sozinha
- *   (apenas na primeira vez — o relógio não reinicia a cada heartbeat).
- * - Se houver 2+ pessoas (ou nenhuma), ninguém está "sozinho".
+ *   (só a primeira vez — o relógio não reinicia a cada batimento).
+ * - Se houver 2+ pessoas (ou nenhuma), ninguém está "sozinho": zera o contador.
+ * Isso faz o contador iniciar quando o usuário fica sozinho e ser zerado quando
+ * outra pessoa entra; ao voltar a ficar sozinho, ele recomeça do zero.
  */
 async function refreshSoloState(channel: ChannelId): Promise<void> {
   const rows = await channelRows(channel)
@@ -840,15 +842,20 @@ async function refreshSoloState(channel: ChannelId): Promise<void> {
 }
 
 /**
- * Se o usuário estiver SOZINHO no canal há 5 minutos ou mais, desconecta-o
- * automaticamente (AFK) e o avisa. Chamado no heartbeat (drainMailbox).
+ * Se o usuário estiver SOZINHO na sala há 5 minutos ou mais, libera a vaga
+ * automaticamente (oculto, sem aviso na tela). Regras:
+ * - Só conta enquanto o usuário estiver DENTRO da sala (1 pessoa = ele).
+ * - Quando outra pessoa entra (ex.: 2/4), o contador é zerado/desativado.
+ * - Se ela sair e ele voltar a ficar sozinho, o contador reinicia do zero.
+ * - Quem saiu manualmente (lobby) nunca é afetado.
+ * Chamado no heartbeat (drainMailbox).
  */
 async function maybeKickSolo(clientId: string): Promise<void> {
   const stored = await getClientRow(clientId)
   // Sai cedo se não existir ou se já marcou saída (left_at preenchido).
   if (!stored || stored.left_at != null) return
   // Presença no lobby (quem só abriu o site e não entrou em sala)
-  // não deve ser "expulso" por ficar sozinho — isso só vale para salas.
+  // não deve ser "expulso" — isso só vale para salas públicas.
   if (!(await isPublicChannel(stored.channel))) return
   const rows = await channelRows(stored.channel as ChannelId)
   if (rows.length !== 1) return
@@ -856,7 +863,7 @@ async function maybeKickSolo(clientId: string): Promise<void> {
   if (lone.client_id !== clientId) return
   if (lone.single_since == null) return
   if (nowMs() - Number(lone.single_since) < SOLO_KICK_MS) return
-  // Avisa antes de sair do canal para o próprio usuário entender o motivo.
+  // Avisa o usuário antes de liberar a vaga (popup "você foi removido da sala").
   await enqueueTo(clientId, { type: 'kicked', reason: 'solo' })
   await notifyChannel(stored.channel as ChannelId, () => ({ type: 'peer-left', clientId }), clientId)
   await getSql()`

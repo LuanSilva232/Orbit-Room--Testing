@@ -280,8 +280,8 @@ const STRINGS = {
   closeWatch: ['Fechar', 'Close'],
   soloKickedTitle: ['Você foi removido da sala', 'You were removed from the room'],
   soloKicked: [
-    'Você ficou sozinho(a) no canal por mais de 5 minutos e foi removido(a) automaticamente para não deixar um perfil vazio.',
-    'You were alone in the channel for over 5 minutes and were automatically removed to avoid leaving an empty profile.',
+    'Você ficou sozinho(a) nesta sala por mais de 5 minutos. Para manter as salas livres e não ocupar espaço, você foi removido(a) automaticamente. Fique à vontade para entrar de novo quando quiser. 💜',
+    'You were alone in this room for over 5 minutes. To keep rooms free and avoid taking up space, you were automatically removed. Feel free to come back whenever you like. 💜',
   ],
   gotIt: ['Entendi', 'Got it'],
   yes: ['Sim', 'Yes'],
@@ -749,6 +749,38 @@ export function ShareRoom() {
       bio: profileRef.current.bio,
       cover: profileRef.current.cover,
     })
+  }, [])
+
+  // Ao recarregar ou fechar a página, sai da sala automaticamente (sem precisar
+  // apertar o botão sair). Evita deixar "fantasma": o usuário some da contagem
+  // da sala na hora, em vez de continuar marcado como presente após o refresh.
+  useEffect(() => {
+    const sendLeave = () => {
+      const id = clientIdRef.current
+      if (!id) return
+      try {
+        const body = JSON.stringify({ action: 'leave', clientId: id })
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon('/api/rtc', new Blob([body], { type: 'application/json' }))
+        } else {
+          void fetch('/api/rtc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            keepalive: true,
+          })
+        }
+      } catch {
+        /* noop */
+      }
+    }
+    const onHide = () => sendLeave()
+    window.addEventListener('pagehide', onHide)
+    window.addEventListener('beforeunload', onHide)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      window.removeEventListener('beforeunload', onHide)
+    }
   }, [])
 
   const bind = useCallback((el: HTMLMediaElement | null, stream: MediaStream | null) => {
@@ -1818,9 +1850,8 @@ export function ShareRoom() {
   const screenTiles = [...allScreenTiles].sort(
     (a, b) => screenOrderRef.current.indexOf(a.id) - screenOrderRef.current.indexOf(b.id)
   )
-  const normalTiles = tiles.filter((t) => !t.isScreen)
-  const primaryScreen = screenTiles[0]
-  const secondaryScreen = screenTiles[1]
+  // Aba "Perfis": somente participantes sem câmera/tela (avatares).
+  const profileTiles = tiles.filter((t) => !t.isScreen && !t.hasVideo)
   const extraScreens = screenTiles.slice(2)
   // Câmeras ativas (inclui a minha) e se há telas/câmeras para exibir nas abas.
   const cameraTiles = tiles.filter((t) => !t.isScreen && t.hasVideo)
@@ -2109,7 +2140,7 @@ export function ShareRoom() {
                 👥 {t('backToProfiles')}
               </button>
             </div>
-            <div className="flex flex-wrap justify-center gap-3">
+            <div className="flex flex-wrap content-start items-start justify-start gap-3">
               {cameraTiles.map((tile) => renderMediaTile(tile, true))}
             </div>
           </>
@@ -2126,61 +2157,16 @@ export function ShareRoom() {
                 👥 {t('backToProfiles')}
               </button>
             </div>
-            <div className="flex flex-wrap justify-center gap-3">
+            <div className="flex flex-wrap content-start items-start justify-start gap-3">
               {screenTiles.map((tile) => renderMediaTile(tile, false))}
             </div>
           </>
         )}
-        {/* Aba de PERFIS (padrão) */}
+        {/* Aba de PERFIS (padrão): somente os perfis dos participantes */}
         {callView === 'profiles' && (
-          <>
-            {/* Modo de teste com telas simuladas (somente admin) */}
-            {isAdmin && demoScreens.length > 0 && (
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-indigo-400/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
-                <span>{t('demoBanner')} ({demoScreens.length})</span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setDemoScreens((d) => [...d, `Usuário ${d.length + 3}`])}
-                    className="rounded-md bg-indigo-500/20 px-2 py-1 font-semibold hover:bg-indigo-500/30"
-                  >
-                    + {t('addDemoScreen')}
-                  </button>
-                  <button
-                    onClick={() => setDemoScreens([])}
-                    className="rounded-md bg-white/10 px-2 py-1 font-semibold hover:bg-white/20"
-                  >
-                    {t('clearDemo')}
-                  </button>
-                </div>
-              </div>
-            )}
-            {/* 1ª tela compartilhada: fica no topo */}
-            {primaryScreen && <div className="flex items-center justify-center">{renderTile(primaryScreen)}</div>}
-            {/* 2ª tela: fica no meio + botão "ver mais" a partir da 3ª */}
-            {secondaryScreen && (
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                {renderTile(secondaryScreen)}
-                {extraScreens.length > 0 && (
-                  <button
-                    onClick={() => setShowMoreScreens(true)}
-                    className="flex h-24 w-44 flex-col items-center justify-center gap-1.5 rounded-2xl border border-indigo-400/30 bg-gradient-to-br from-indigo-500/20 to-fuchsia-500/10 text-indigo-100 shadow-lg shadow-indigo-500/10 transition hover:scale-[1.03] hover:from-indigo-500/30 hover:to-fuchsia-500/20"
-                  >
-                    <span className="text-2xl">🎬</span>
-                    <span className="text-[12px] font-bold">{t('seeMoreScreens')}</span>
-                    <span className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">
-                      {extraScreens.length} {t('screenShort')}
-                    </span>
-                  </button>
-                )}
-              </div>
-            )}
-            {/* participantes / avatares */}
-            {normalTiles.length > 0 && (
-              <div className="flex min-h-0 flex-wrap content-start items-start justify-start gap-3">
-                {normalTiles.map((tile) => renderTile(tile))}
-              </div>
-            )}
-          </>
+          <div className="flex min-h-0 flex-wrap content-start items-start justify-start gap-3">
+            {profileTiles.map((tile) => renderTile(tile))}
+          </div>
         )}
       </div>
     )
