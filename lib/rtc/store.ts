@@ -124,7 +124,7 @@ async function pushExistingScreenKinds(to: string, channel: ChannelId): Promise<
   }
 }
 
-const FIXED_CHANNELS = ['geral', 'sala-1', 'sala-2', 'sala-3']
+const FIXED_CHANNELS = ['sala-1', 'sala-2', 'sala-3']
 
 // Valida um canal: pode ser um canal fixo OU uma sala personalizada cadastrada.
 export async function isValidChannel(channel: string): Promise<boolean> {

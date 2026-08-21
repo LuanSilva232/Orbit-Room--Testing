@@ -72,7 +72,6 @@ export const QUALITY_OPTIONS: { id: Quality; label: string; hint: string }[] = [
 ]
 
 export const DEFAULT_CHANNELS: { id: ChannelId; label: string; description: string }[] = [
-  { id: 'geral', label: 'Geral', description: 'voz para todos' },
   { id: 'sala-1', label: 'Sala 1', description: 'voz livre' },
   { id: 'sala-2', label: 'Sala 2', description: 'voz livre' },
   { id: 'sala-3', label: 'Sala 3', description: 'voz livre' },

@@ -57,7 +57,7 @@ export async function GET(req: Request) {
     if (action === 'sync') {
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       const member = await store.getMember(clientId)
-      const channel = (member?.channel ?? 'geral') as ChannelId
+      const channel = (member?.channel ?? 'sala-1') as ChannelId
       const current = (await store.membersInChannel(channel)).filter(
         (m) => m.clientId !== clientId
       )
@@ -65,7 +65,7 @@ export async function GET(req: Request) {
     }
 
     if (action === 'chat') {
-      const channel = url.searchParams.get('channel') ?? 'geral'
+      const channel = url.searchParams.get('channel') ?? 'sala-1'
       return ok<{ messages: ChatMessage[] }>({
         messages: await store.chatMessages(channel as ChannelId),
       })
@@ -86,7 +86,7 @@ export async function POST(req: Request) {
 
     if (action === 'join') {
       const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
-      const channel = typeof body.channel === 'string' ? body.channel : 'geral'
+      const channel = typeof body.channel === 'string' ? body.channel : 'sala-1'
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       const photo = typeof body.photo === 'string' ? body.photo : undefined
       const bio = typeof body.bio === 'string' ? body.bio : undefined
@@ -154,7 +154,7 @@ export async function POST(req: Request) {
     }
 
     if (action === 'chat') {
-      const channel = typeof body.channel === 'string' ? body.channel : 'geral'
+      const channel = typeof body.channel === 'string' ? body.channel : 'sala-1'
       const text = typeof body.text === 'string' ? body.text.trim() : ''
       const authorId = typeof body.authorId === 'string' ? body.authorId.trim() : ''
       const author = typeof body.author === 'string' ? body.author : ''
@@ -177,7 +177,7 @@ export async function POST(req: Request) {
     }
 
     if (action === 'chat-clear') {
-      const channel = typeof body.channel === 'string' ? body.channel : 'geral'
+      const channel = typeof body.channel === 'string' ? body.channel : 'sala-1'
       if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
       return ok<{ cleared: number }>({
         cleared: await store.clearChatChannel(channel as ChannelId),

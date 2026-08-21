@@ -262,6 +262,11 @@ const STRINGS = {
   notifyPromptYes: ['Sim, ativar', 'Yes, enable'],
   notifyPromptLater: ['Agora não', 'Not now'],
   seeMoreScreens: ['Ver mais telas', 'See more screens'],
+  camerasTabTitle: ['Câmeras ativas', 'Active cameras'],
+  screensTabTitle: ['Telas compartilhadas', 'Shared screens'],
+  backToProfiles: ['Ver perfis', 'View profiles'],
+  seeCamerasBtn: ['Câmeras', 'Cameras'],
+  seeScreensBtn: ['Ver telas', 'View screens'],
   whoIsSharing: ['Compartilhando tela', 'Screen sharing'],
   screensSharing: ['compartilhando tela', 'sharing screen'],
   screenSimLabel: ['Simulação', 'Simulation'],
@@ -340,7 +345,7 @@ function DeleteCountdown({ until }: { until: number }) {
 export function ShareRoom() {
   const [clientId, setClientId] = useState('')
   const [name, setName] = useState('')
-  const [channel, setChannel] = useState<ChannelId>('geral')
+  const [channel, setChannel] = useState<ChannelId>('sala-1')
   const [inCall, setInCall] = useState(false)
   const [onlineMembers, setOnlineMembers] = useState<Member[]>([])
   const [offlineMembers, setOfflineMembers] = useState<Member[]>([])
@@ -351,6 +356,10 @@ export function ShareRoom() {
   const [micOn, setMicOn] = useState(false)
   const [screenStreaming, setScreenStreaming] = useState(false)
   const [screenWithAudio, setScreenWithAudio] = useState(false)
+  // Aba ativa na tela de chamada: perfis padrão, câmeras ou telas compartilhadas.
+  const [callView, setCallView] = useState<'profiles' | 'cameras' | 'screens'>('profiles')
+  // Stream local reativo (mic/câmera), para a grade reagir na hora que fica pronto.
+  const [localMediaStream, setLocalMediaStream] = useState<MediaStream | null>(null)
   const [quality, setQuality] = useState<Quality>('auto')
 
   const [profile, setProfile] = useState<Profile>({ name: '' })
@@ -524,10 +533,10 @@ export function ShareRoom() {
         return
       }
       if (channel === id) {
-        setChannel('geral')
+        setChannel('sala-1')
         setInCall(false)
         inCallRef.current = false
-        channelRef.current = 'geral'
+        channelRef.current = 'sala-1'
       }
       void loadRooms()
     },
@@ -705,7 +714,7 @@ export function ShareRoom() {
   const screenStreamRef = useRef<MediaStream | null>(null)
   const clientIdRef = useRef('')
   const nameRef = useRef('')
-  const channelRef = useRef<ChannelId>('geral')
+  const channelRef = useRef<ChannelId>('sala-1')
   const inCallRef = useRef(false)
   const remotePeersRef = useRef<Record<string, Remote>>({})
   const screenTrackIdsRef = useRef<Record<string, string[]>>({})
@@ -814,6 +823,7 @@ export function ShareRoom() {
     }
     localStreamRef.current = stream
     if (stream) engine?.addLocalStream(stream)
+    setLocalMediaStream(stream)
   }, [])
 
   const applyQualityToStreams = useCallback((q: Quality) => {
@@ -1240,7 +1250,7 @@ export function ShareRoom() {
     async (channelId: ChannelId, password?: string) => {
       if (!clientIdRef.current) return
       // Só evita clicar de novo quando já estamos DENTRO desse canal.
-      // (O "geral" é o padrão da página, então antes de entrar ele não pode bloquear.)
+      // (O "sala-1" é o padrão da página, então antes de entrar ele não pode bloquear.)
       if (inCallRef.current && channelId === channelRef.current) return
       engineRef.current?.closeAll()
       remotePeersRef.current = {}
@@ -1369,6 +1379,7 @@ export function ShareRoom() {
     }
     seenChatRef.current = new Set()
     setChat([])
+    setCallView('profiles')
     inCallRef.current = false
     setInCall(false)
     void apiClient.post('/api/rtc', { action: 'leave', clientId: clientIdRef.current })
@@ -1724,7 +1735,7 @@ export function ShareRoom() {
   const tiles = useMemo<Tile[]>(() => {
   const tiles: Tile[] = []
   if (inCall) {
-    const localStream = localStreamRef.current
+    const localStream = localMediaStream
     if (camOn && localStream) {
       tiles.push({
         id: 'local-cam',
@@ -1796,7 +1807,7 @@ export function ShareRoom() {
     }
   }
     return tiles
-  }, [inCall, camOn, name, profile, screenStreaming, remotePeers, mutedPeers, isAdmin, demoScreens])
+  }, [inCall, camOn, name, profile, screenStreaming, remotePeers, mutedPeers, isAdmin, demoScreens, localMediaStream])
 
   // Ordena as telas compartilhadas por ordem de ativação (quem começou primeiro).
   const allScreenTiles = tiles.filter((t) => t.isScreen)
@@ -1811,6 +1822,16 @@ export function ShareRoom() {
   const primaryScreen = screenTiles[0]
   const secondaryScreen = screenTiles[1]
   const extraScreens = screenTiles.slice(2)
+  // Câmeras ativas (inclui a minha) e se há telas/câmeras para exibir nas abas.
+  const cameraTiles = tiles.filter((t) => !t.isScreen && t.hasVideo)
+  const hasCameras = cameraTiles.length > 0
+  const hasScreens = screenTiles.length > 0
+
+  // Se a aba aberta ficou vazia (ex.: todos desligaram a câmera), volta para perfis.
+  useEffect(() => {
+    if (callView === 'cameras' && !hasCameras) setCallView('profiles')
+    if (callView === 'screens' && !hasScreens) setCallView('profiles')
+  }, [callView, hasCameras, hasScreens])
 
   const renderTile = (tile: Tile) => {
     // Placeholder para telas simuladas (modo de teste).
@@ -2018,6 +2039,46 @@ export function ShareRoom() {
     return () => window.clearInterval(timer)
   }, [tiles, micOn, mutedPeers])
 
+  // Tile compacto para as abas "Câmeras" e "Ver tela": vídeo + perfil na quina.
+  const renderMediaTile = (tile: Tile, square: boolean) => {
+    return (
+      <div
+        key={tile.id}
+        className={`relative flex-none overflow-hidden rounded-xl border border-white/10 bg-black/70 ${
+          square
+            ? 'aspect-square w-[150px] sm:w-[170px]'
+            : 'aspect-video w-[250px] sm:w-[300px] lg:w-[380px]'
+        }`}
+      >
+        {tile.hasVideo ? (
+          <video
+            autoPlay
+            playsInline
+            muted={tile.isLocal || tile.muted}
+            className="h-full w-full object-cover"
+            ref={(el) => bind(el, tile.stream)}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-3xl">🖥️</div>
+        )}
+        {/* Perfil (foto + nome) no canto inferior esquerdo */}
+        <div className="absolute bottom-2 left-2 flex max-w-[85%] items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1">
+          <Avatar name={tile.name} photo={tile.photo} size={22} />
+          <span className="truncate text-[11px] font-semibold text-slate-100">{tile.name}</span>
+        </div>
+        {tile.isScreen && !tile.isLocal && (
+          <button
+            title={screenMuted[tile.id] ? t('screenUnmute') : t('screenMute')}
+            onClick={() => setScreenMuted((prev) => ({ ...prev, [tile.id]: !(prev[tile.id] ?? false) }))}
+            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg bg-black/50 text-xs text-white transition hover:bg-black/70"
+          >
+            {screenMuted[tile.id] ? '🔇' : '🔊'}
+          </button>
+        )}
+      </div>
+    )
+  }
+
   const renderMain = () => {
     if (!inCall) {
       return (
@@ -2036,51 +2097,90 @@ export function ShareRoom() {
     }
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto py-2">
-        {/* Modo de teste com telas simuladas (somente admin) */}
-        {isAdmin && demoScreens.length > 0 && (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-indigo-400/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
-            <span>{t('demoBanner')} ({demoScreens.length})</span>
-            <div className="flex gap-2">
+        {/* Aba de CÂMERAS */}
+        {callView === 'cameras' && (
+          <>
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-sky-500/10 px-3 py-2 text-xs text-sky-200 ring-1 ring-sky-400/20">
+              <span className="font-semibold">📷 {t('camerasTabTitle')} ({cameraTiles.length})</span>
               <button
-                onClick={() => setDemoScreens((d) => [...d, `Usuário ${d.length + 3}`])}
-                className="rounded-md bg-indigo-500/20 px-2 py-1 font-semibold hover:bg-indigo-500/30"
+                onClick={() => setCallView('profiles')}
+                className="rounded-md bg-white/10 px-2.5 py-1 font-semibold hover:bg-white/20"
               >
-                + {t('addDemoScreen')}
-              </button>
-              <button
-                onClick={() => setDemoScreens([])}
-                className="rounded-md bg-white/10 px-2 py-1 font-semibold hover:bg-white/20"
-              >
-                {t('clearDemo')}
+                👥 {t('backToProfiles')}
               </button>
             </div>
-          </div>
+            <div className="flex flex-wrap justify-center gap-3">
+              {cameraTiles.map((tile) => renderMediaTile(tile, true))}
+            </div>
+          </>
         )}
-        {/* 1ª tela compartilhada: fica no topo */}
-        {primaryScreen && <div className="flex items-center justify-center">{renderTile(primaryScreen)}</div>}
-        {/* 2ª tela: fica no meio + botão "ver mais" a partir da 3ª */}
-        {secondaryScreen && (
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {renderTile(secondaryScreen)}
-            {extraScreens.length > 0 && (
+        {/* Aba de TELAS COMPARTILHADAS */}
+        {callView === 'screens' && (
+          <>
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-200 ring-1 ring-fuchsia-400/20">
+              <span className="font-semibold">🖥️ {t('screensTabTitle')} ({screenTiles.length})</span>
               <button
-                onClick={() => setShowMoreScreens(true)}
-                className="flex h-24 w-44 flex-col items-center justify-center gap-1.5 rounded-2xl border border-indigo-400/30 bg-gradient-to-br from-indigo-500/20 to-fuchsia-500/10 text-indigo-100 shadow-lg shadow-indigo-500/10 transition hover:scale-[1.03] hover:from-indigo-500/30 hover:to-fuchsia-500/20"
+                onClick={() => setCallView('profiles')}
+                className="rounded-md bg-white/10 px-2.5 py-1 font-semibold hover:bg-white/20"
               >
-                <span className="text-2xl">🎬</span>
-                <span className="text-[12px] font-bold">{t('seeMoreScreens')}</span>
-                <span className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">
-                  {extraScreens.length} {t('screenShort')}
-                </span>
+                👥 {t('backToProfiles')}
               </button>
-            )}
-          </div>
+            </div>
+            <div className="flex flex-wrap justify-center gap-3">
+              {screenTiles.map((tile) => renderMediaTile(tile, false))}
+            </div>
+          </>
         )}
-        {/* participantes / avatares */}
-        {normalTiles.length > 0 && (
-          <div className="flex min-h-0 flex-wrap content-start items-start justify-start gap-3">
-            {normalTiles.map((tile) => renderTile(tile))}
-          </div>
+        {/* Aba de PERFIS (padrão) */}
+        {callView === 'profiles' && (
+          <>
+            {/* Modo de teste com telas simuladas (somente admin) */}
+            {isAdmin && demoScreens.length > 0 && (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-indigo-400/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+                <span>{t('demoBanner')} ({demoScreens.length})</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setDemoScreens((d) => [...d, `Usuário ${d.length + 3}`])}
+                    className="rounded-md bg-indigo-500/20 px-2 py-1 font-semibold hover:bg-indigo-500/30"
+                  >
+                    + {t('addDemoScreen')}
+                  </button>
+                  <button
+                    onClick={() => setDemoScreens([])}
+                    className="rounded-md bg-white/10 px-2 py-1 font-semibold hover:bg-white/20"
+                  >
+                    {t('clearDemo')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* 1ª tela compartilhada: fica no topo */}
+            {primaryScreen && <div className="flex items-center justify-center">{renderTile(primaryScreen)}</div>}
+            {/* 2ª tela: fica no meio + botão "ver mais" a partir da 3ª */}
+            {secondaryScreen && (
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                {renderTile(secondaryScreen)}
+                {extraScreens.length > 0 && (
+                  <button
+                    onClick={() => setShowMoreScreens(true)}
+                    className="flex h-24 w-44 flex-col items-center justify-center gap-1.5 rounded-2xl border border-indigo-400/30 bg-gradient-to-br from-indigo-500/20 to-fuchsia-500/10 text-indigo-100 shadow-lg shadow-indigo-500/10 transition hover:scale-[1.03] hover:from-indigo-500/30 hover:to-fuchsia-500/20"
+                  >
+                    <span className="text-2xl">🎬</span>
+                    <span className="text-[12px] font-bold">{t('seeMoreScreens')}</span>
+                    <span className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">
+                      {extraScreens.length} {t('screenShort')}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
+            {/* participantes / avatares */}
+            {normalTiles.length > 0 && (
+              <div className="flex min-h-0 flex-wrap content-start items-start justify-start gap-3">
+                {normalTiles.map((tile) => renderTile(tile))}
+              </div>
+            )}
+          </>
         )}
       </div>
     )
@@ -2607,6 +2707,25 @@ export function ShareRoom() {
                   <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{camOn ? t('camOn') : t('camTurn')}</span>
                 </button>
 
+                {hasCameras && (
+                  <button
+                    onClick={() => setCallView(callView === 'cameras' ? 'profiles' : 'cameras')}
+                    title={t('camerasTabTitle')}
+                    className="flex w-20 flex-none flex-col items-center gap-1.5"
+                  >
+                    <span
+                      className={`flex h-12 w-12 items-center justify-center rounded-full text-lg transition ${
+                        callView === 'cameras'
+                          ? 'bg-sky-500/25 text-sky-100 ring-1 ring-sky-400/50'
+                          : 'bg-white/10 text-white hover:bg-white/15'
+                      }`}
+                    >
+                      🎥
+                    </span>
+                    <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{t('seeCamerasBtn')}</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => void toggleScreen()}
                   className="flex w-20 flex-none flex-col items-center gap-1.5"
@@ -2623,6 +2742,25 @@ export function ShareRoom() {
                   </span>
                   <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{screenStreaming ? t('screenStop') : t('screenShare')}</span>
                 </button>
+
+                {hasScreens && (
+                  <button
+                    onClick={() => setCallView(callView === 'screens' ? 'profiles' : 'screens')}
+                    title={t('screensTabTitle')}
+                    className="flex w-20 flex-none flex-col items-center gap-1.5"
+                  >
+                    <span
+                      className={`flex h-12 w-12 items-center justify-center rounded-full text-lg transition ${
+                        callView === 'screens'
+                          ? 'bg-fuchsia-500/25 text-fuchsia-100 ring-1 ring-fuchsia-400/50'
+                          : 'bg-white/10 text-white hover:bg-white/15'
+                      }`}
+                    >
+                      🎬
+                    </span>
+                    <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{t('seeScreensBtn')}</span>
+                  </button>
+                )}
               </div>
 
               {/* Fileira secundária: áudio na tela + qualidade */}
