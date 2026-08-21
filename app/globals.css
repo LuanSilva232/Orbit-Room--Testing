@@ -181,14 +181,28 @@ body {
 
 /* Painéis translúcidos com borda suave (estilo da arte) */
 .share-panel {
-  background: rgba(13, 18, 40, 0.45);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(13, 18, 40, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.26);
   backdrop-filter: blur(10px);
+  /* Impede o "quicar" do mobile: ao rolar, não deixa vão vazio embaixo nem
+     sobe o painel (evita a logo cortada e o espaço sobrando). */
+  overscroll-behavior-y: none;
 }
 
 .share-panel-soft {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+}
+
+/* Painel de Configurações — fundo bem mais escuro/sólido para melhor leitura */
+.share-panel.settings-drawer {
+  background: rgba(7, 11, 26, 0.98);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+/* Painel sem blur de fundo (para telas grandes onde o blur causa travamento no hover) */
+.share-panel-flat {
+  backdrop-filter: none;
 }
 
 /* ---------- Tema claro (preferência em Configurações → Aparência) ---------- */

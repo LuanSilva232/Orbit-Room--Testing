@@ -9,6 +9,32 @@ export type Member = {
   photo?: string
   bio?: string
   cover?: string
+  isAnonymous: boolean
+  userId?: string
+}
+
+export type Room = {
+  id: string
+  name: string
+  isPrivate: boolean
+  ownerId: string
+  createdAt: number
+  hasPassword: boolean
+  ownerName?: string
+  ownerPhoto?: string
+  capacity: number
+}
+
+export type RoomInvite = {
+  id: string
+  roomId: string
+  roomName: string
+  isPrivate: boolean
+  hasPassword: boolean
+  fromId: string
+  fromName: string
+  fromPhoto: string | null
+  createdAt: number
 }
 
 export type SignalKind = 'offer' | 'answer' | 'ice'
@@ -32,6 +58,8 @@ export type ChatMessage = {
   photo?: string
   bio?: string
   cover?: string
+  isAnonymous: boolean
+  userId?: string
 }
 
 export type Quality = 'auto' | 'baixa' | 'media' | 'alta'
@@ -44,7 +72,6 @@ export const QUALITY_OPTIONS: { id: Quality; label: string; hint: string }[] = [
 ]
 
 export const DEFAULT_CHANNELS: { id: ChannelId; label: string; description: string }[] = [
-  { id: 'geral', label: 'Geral', description: 'voz para todos' },
   { id: 'sala-1', label: 'Sala 1', description: 'voz livre' },
   { id: 'sala-2', label: 'Sala 2', description: 'voz livre' },
   { id: 'sala-3', label: 'Sala 3', description: 'voz livre' },

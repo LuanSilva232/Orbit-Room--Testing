@@ -6,16 +6,25 @@ import type {
   ChatMessage,
   MailboxMessage,
   Member,
+  Room,
+  RoomInvite,
   SignalKind,
 } from './types'
 import { ensureDb, getSql } from '@/db'
+import { AppError } from '@/lib/errors'
 
 // Estado da sala (presença, sinalização, chat e compartilhamento de tela)
 // persistido no banco em nuvem. Isso permite funcionar em hospedagens
 // serverless (Vercel), onde cada requisição pode cair numa instância diferente
 // e o estado precisa ser compartilhado/centralizado.
-export const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline ("fantasma")
-export const SOLO_KICK_MS = 5 * 60 * 1000 // 5min sozinho no canal = desconecta automaticamente
+export const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline
+export const PRESENT_MS = 3 * 60 * 1000 // 3min sem batimento = não está mais na sala/call (evita "fantasmas")
+export const SOLO_KICK_MS = 5 * 60 * 1000 // 5min sozinho na sala = sai do canal automaticamente (oculto)
+export const ANON_MSG_MS = 24 * 60 * 60 * 1000 // mensagens de anônimos somem após 24h
+export const LOGGED_MSG_MS = 48 * 60 * 60 * 1000 // mensagens de contas logadas somem após 48h
+export const ANON_OFFLINE_MS = 15 * 24 * 60 * 60 * 1000 // anônimo offline é apagado após 15 dias (cache temporário)
+export const DELETE_GRACE_MS = 3 * 24 * 60 * 60 * 1000 // 3 dias para "se arrepender" antes de excluir a conta
+export const MAX_PUBLIC_MEMBERS = 10 // limite por sala pública, para não travar (lentidão)
 
 type ClientRow = {
   client_id: string
@@ -28,6 +37,7 @@ type ClientRow = {
   last_seen: string | number
   left_at: string | number | null
   single_since: string | number | null
+  user_id: string | null
 }
 
 type TrackRow = { client_id: string; track_ids: string[] }
@@ -52,12 +62,14 @@ function toMember(r: ClientRow): Member {
     photo: r.photo ?? undefined,
     bio: r.bio ?? undefined,
     cover: r.cover ?? undefined,
+    isAnonymous: !r.user_id,
+    userId: r.user_id ?? undefined,
   }
 }
 
 async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
     FROM rtc_clients WHERE client_id = ${clientId}
   `
   return rows[0]
@@ -65,9 +77,9 @@ async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
 
 async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
   return getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
     FROM rtc_clients
-    WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+    WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - PRESENT_MS}
   `
 }
 
@@ -112,40 +124,119 @@ async function pushExistingScreenKinds(to: string, channel: ChannelId): Promise<
   }
 }
 
-export function isChannel(channel: string): boolean {
-  return ['geral', 'sala-1', 'sala-2', 'sala-3'].includes(channel)
+const FIXED_CHANNELS = ['sala-1', 'sala-2', 'sala-3']
+
+// Valida um canal: pode ser um canal fixo OU uma sala personalizada cadastrada.
+export async function isValidChannel(channel: string): Promise<boolean> {
+  if (FIXED_CHANNELS.includes(channel)) return true
+  await ensureDb()
+  const rows = await getSql()<{ id: string }[]>`SELECT id FROM rooms WHERE id = ${channel}`
+  return rows.length > 0
 }
 
+// Alias de compatibilidade para quem usa `isChannel`.
+export const isChannel = isValidChannel
+
+// Salas públicas: canais fixos e salas personalizadas marcadas como públicas.
+export async function isPublicChannel(channel: string): Promise<boolean> {
+  if (FIXED_CHANNELS.includes(channel)) return true
+  const room = await roomById(channel)
+  return room ? !room.isPrivate : false
+}
+
+// Apaga mensagens de chat cujo prazo de validade expirou.
+async function purgeExpiredChat(): Promise<void> {
+  await getSql()`
+    DELETE FROM rtc_chat WHERE expires_at IS NOT NULL AND expires_at <= ${nowMs()}
+  `
+}
+
+// Apaga registros de ANÔNIMOS que ficaram offline por mais de 15 dias.
+// Quem fez login com o Google NUNCA é apagado por aqui (fica permanente).
+// O anônimo funciona como um "cache" temporário de 15 dias: sem ele voltar
+// nesse prazo, a conta é purgada e, se a pessoa retornar, nasce de novo.
+async function purgeExpiredAnon(): Promise<void> {
+  const cutoff = nowMs() - ANON_OFFLINE_MS
+  const rows = await getSql()<{ client_id: string }[]>`
+    SELECT client_id FROM rtc_clients
+    WHERE user_id IS NULL
+      AND ( (left_at IS NOT NULL AND left_at <= ${cutoff})
+            OR last_seen <= ${cutoff} )
+  `
+  for (const r of rows) {
+    await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${r.client_id}`
+    await getSql()`DELETE FROM rtc_clients WHERE client_id = ${r.client_id}`
+  }
+}
+
+// Apaga contas que tiveram a exclusão confirmada (carência de 3 dias já venceu).
+// Vale para anônimos (rtc_clients) e para quem entrou com Google (users).
+async function purgeExpiredDeletes(): Promise<void> {
+  const now = nowMs()
+  const anon = await getSql()<{ client_id: string }[]>`
+    SELECT client_id FROM rtc_clients
+    WHERE delete_scheduled_at IS NOT NULL AND delete_scheduled_at <= ${now}
+  `
+  for (const r of anon) {
+    await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${r.client_id}`
+    await getSql()`DELETE FROM rtc_clients WHERE client_id = ${r.client_id}`
+  }
+  const users = await getSql()<{ id: string }[]>`
+    SELECT id FROM users
+    WHERE delete_scheduled_at IS NOT NULL AND delete_scheduled_at <= ${now}
+  `
+  for (const u of users) {
+    // Remove também a presença/identidade do site vinculada à conta (cascade cuida do resto).
+    await getSql()`DELETE FROM rtc_clients WHERE user_id = ${u.id}`
+    await getSql()`DELETE FROM users WHERE id = ${u.id}`
+  }
+}
+
+// Mantém o banco limpo: mensagens vencidas, anônimos offline antigos e contas excluídas.
+// Roda com moderação (a cada ~1min por processo) para não pesar no polling.
+let lastMaintenanceMs = 0
+async function runMaintenance(force = false): Promise<void> {
+  const now = nowMs()
+  if (!force && now - lastMaintenanceMs < 60 * 1000) return
+  lastMaintenanceMs = now
+  await purgeExpiredChat()
+  await purgeExpiredAnon()
+  await purgeExpiredDeletes()
+}
+
+/** Nome único: considera todos os registros (online E offline), exceto o próprio. */
 export async function isNameTaken(
   name: string,
   exceptClientId?: string
 ): Promise<boolean> {
   await ensureDb()
+  await purgeExpiredAnon()
   const n = name.trim().toLowerCase()
-  const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
+  const rows = await getSql()<{ client_id: string }[]>`
+    SELECT client_id
     FROM rtc_clients
     WHERE lower(name) = ${n} AND client_id <> ${exceptClientId ?? ''}
   `
-  return rows.some((r) => !isGone(r))
+  return rows.length > 0
 }
 
 export async function onlineMembers(): Promise<Member[]> {
   await ensureDb()
+  await runMaintenance()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
-    FROM rtc_clients WHERE left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
+    FROM rtc_clients WHERE last_seen > ${nowMs() - PRESENT_MS}
   `
   return rows.map(toMember)
 }
 
-/** Membros que saíram (ou inativos há mais de 15min) — podem ser apagados. */
+/** Usuários que saíram do site (sem atividade há mais de 15min). */
 export async function offlineMembers(): Promise<Member[]> {
   await ensureDb()
+  await runMaintenance()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
-    FROM rtc_clients
-    WHERE left_at IS NOT NULL OR last_seen <= ${nowMs() - OFFLINE_MS}
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
+    FROM rtc_clients WHERE last_seen <= ${nowMs() - OFFLINE_MS}
   `
   return rows.map(toMember)
 }
@@ -155,10 +246,264 @@ export async function membersInChannel(channel: ChannelId): Promise<Member[]> {
   return (await channelRows(channel)).map(toMember)
 }
 
+type RoomRow = {
+  id: string
+  name: string
+  is_private: boolean
+  owner_id: string
+  password: string | null
+  created_at: string | number
+  capacity: number
+  owner_name: string | null
+  owner_photo: string | null
+}
+
+function toRoom(r: RoomRow): Room {
+  return {
+    id: r.id,
+    name: r.name,
+    isPrivate: r.is_private,
+    ownerId: r.owner_id,
+    createdAt: Number(r.created_at),
+    hasPassword: Boolean(r.password),
+    ownerName: r.owner_name ?? undefined,
+    ownerPhoto: r.owner_photo ?? undefined,
+    capacity: r.capacity ?? 0,
+  }
+}
+
+// Interno: retorna a linha com a senha (nunca expõe para o cliente).
+async function roomRowWithPassword(id: string): Promise<RoomRow | undefined> {
+  await ensureDb()
+  const rows = await getSql()<RoomRow[]>`
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at, r.capacity,
+           u.display_name AS owner_name, u.photo AS owner_photo
+    FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
+    WHERE r.id = ${id}
+  `
+  return rows[0]
+}
+
+export async function roomById(id: string): Promise<Room | undefined> {
+  const row = await roomRowWithPassword(id)
+  return row ? toRoom(row) : undefined
+}
+
+// Lista salas que têm ao menos uma pessoa presente agora (a última a sair tira
+// a sala da lista; ela continua no painel "Minhas salas" do dono).
+async function listOccupiedRooms(isPrivate: boolean): Promise<Room[]> {
+  await ensureDb()
+  const rows = await getSql()<RoomRow[]>`
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at, r.capacity,
+           u.display_name AS owner_name, u.photo AS owner_photo
+    FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
+    WHERE r.is_private = ${isPrivate}
+      AND EXISTS (
+        SELECT 1 FROM rtc_clients c
+        WHERE c.channel = r.id AND c.left_at IS NULL AND c.last_seen > ${nowMs() - PRESENT_MS}
+      )
+    ORDER BY r.created_at DESC
+  `
+  return rows.map(toRoom)
+}
+
+export async function listPublicRooms(): Promise<Room[]> {
+  return listOccupiedRooms(false)
+}
+
+export async function listPrivateRooms(): Promise<Room[]> {
+  return listOccupiedRooms(true)
+}
+
+export async function listMyRooms(userId: string): Promise<Room[]> {
+  await ensureDb()
+  const rows = await getSql()<RoomRow[]>`
+    SELECT r.id, r.name, r.is_private, r.owner_id, r.password, r.created_at, r.capacity,
+           u.display_name AS owner_name, u.photo AS owner_photo
+    FROM rooms r LEFT JOIN users u ON u.id = r.owner_id
+    WHERE r.owner_id = ${userId} ORDER BY r.created_at DESC
+  `
+  return rows.map(toRoom)
+}
+
+export async function createRoom(
+  name: string,
+  isPrivate: boolean,
+  ownerId: string,
+  password?: string,
+  capacity = 0
+): Promise<Room> {
+  await ensureDb()
+  const id = 'room_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  const now = nowMs()
+  const pwd = isPrivate ? (password?.trim() || null) : null
+  await getSql()`
+    INSERT INTO rooms (id, name, is_private, owner_id, password, created_at, capacity)
+    VALUES (${id}, ${name}, ${isPrivate}, ${ownerId}, ${pwd}, ${now}, ${capacity})
+  `
+  return {
+    id,
+    name,
+    isPrivate,
+    ownerId,
+    createdAt: now,
+    hasPassword: Boolean(pwd),
+    capacity,
+  }
+}
+
+/** Edita uma sala (somente o dono). Retorna a sala atualizada ou undefined se não encontrar. */
+export async function updateRoom(
+  roomId: string,
+  ownerId: string,
+  fields: { name: string; isPrivate: boolean; password?: string; capacity: number }
+): Promise<Room | undefined> {
+  await ensureDb()
+  const row = await roomRowWithPassword(roomId)
+  if (!row || row.owner_id !== ownerId) return undefined
+  const pwd = fields.isPrivate
+    ? fields.password?.trim()
+      ? fields.password.trim()
+      : row.password
+    : null
+  await getSql()`
+    UPDATE rooms
+    SET name = ${fields.name}, is_private = ${fields.isPrivate}, password = ${pwd},
+        capacity = ${fields.capacity}
+    WHERE id = ${roomId}
+  `
+  return toRoom({ ...row, name: fields.name, is_private: fields.isPrivate, password: pwd, capacity: fields.capacity })
+}
+
+// --- Convites de sala ---
+
+export async function sendRoomInvite(
+  fromUserId: string,
+  roomId: string,
+  toUserId: string
+): Promise<void> {
+  await ensureDb()
+  const room = await roomRowWithPassword(roomId)
+  if (!room) throw new AppError('Sala não encontrada.', 404, 'ROOM_NOT_FOUND')
+  const target = await getSql()<{ id: string }[]>`SELECT id FROM users WHERE id = ${toUserId}`
+  if (target.length === 0) throw new AppError('Destinatário não encontrado.', 404, 'USER_NOT_FOUND')
+  if (fromUserId === toUserId) throw new AppError('Você não pode se convidar.', 400, 'SELF_INVITE')
+  const id = 'rinv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+  // Evita duplicar: remove convite anterior do mesmo amigo para a mesma sala.
+  await getSql()`DELETE FROM room_invites WHERE room_id = ${roomId} AND to_id = ${toUserId}`
+  await getSql()`
+    INSERT INTO room_invites (id, room_id, from_id, to_id, created_at)
+    VALUES (${id}, ${roomId}, ${fromUserId}, ${toUserId}, ${nowMs()})
+  `
+}
+
+export async function listRoomInvites(toUserId: string): Promise<RoomInvite[]> {
+  await ensureDb()
+  type InviteRow = {
+    id: string
+    room_id: string
+    from_id: string
+    created_at: string | number
+    room_name: string
+    is_private: boolean
+    password: string | null
+    from_name: string | null
+    from_photo: string | null
+  }
+  const rows = await getSql()<InviteRow[]>`
+    SELECT i.id, i.room_id, i.from_id, i.created_at,
+           r.name AS room_name, r.is_private, r.password,
+           u.display_name AS from_name, u.photo AS from_photo
+    FROM room_invites i
+    JOIN rooms r ON r.id = i.room_id
+    JOIN users u ON u.id = i.from_id
+    WHERE i.to_id = ${toUserId}
+    ORDER BY i.created_at DESC
+  `
+  return rows.map((r) => ({
+    id: r.id,
+    roomId: r.room_id,
+    roomName: r.room_name,
+    isPrivate: r.is_private,
+    hasPassword: r.password != null && r.password.length > 0,
+    fromId: r.from_id,
+    fromName: r.from_name ?? 'Usuário',
+    fromPhoto: r.from_photo,
+    createdAt: Number(r.created_at),
+  }))
+}
+
+/** Verifica se o usuário tem um convite ativo para a sala (permite entrar sem senha). */
+export async function hasRoomInvite(roomId: string, userId: string): Promise<boolean> {
+  await ensureDb()
+  const rows = await getSql()<{ id: string }[]>`
+    SELECT id FROM room_invites WHERE room_id = ${roomId} AND to_id = ${userId} LIMIT 1
+  `
+  return rows.length > 0
+}
+
+/** Remove os convites de uma sala para um usuário (usado ao entrar via convite). */
+export async function clearRoomInvites(roomId: string, userId: string): Promise<void> {
+  await ensureDb()
+  await getSql()`DELETE FROM room_invites WHERE room_id = ${roomId} AND to_id = ${userId}`
+}
+
+// Exclui uma sala (somente o dono). Quem estiver nela volta para o saguão.
+export async function deleteRoom(roomId: string, ownerId: string): Promise<boolean> {
+  await ensureDb()
+  const members = await getSql()<{ client_id: string }[]>`
+    SELECT client_id FROM rtc_clients WHERE channel = ${roomId} AND left_at IS NULL
+  `
+  for (const m of members) {
+    await notifyChannel(
+      roomId as ChannelId,
+      () => ({ type: 'peer-left', clientId: m.client_id }),
+      m.client_id
+    )
+    await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${m.client_id}`
+    await getSql()`
+      UPDATE rtc_clients SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}
+      WHERE client_id = ${m.client_id}
+    `
+  }
+  await getSql()`DELETE FROM rtc_chat WHERE channel = ${roomId}`
+  const res = await getSql()`DELETE FROM rooms WHERE id = ${roomId} AND owner_id = ${ownerId}`
+  return (res.count ?? 0) > 0
+}
+
 export async function getMember(clientId: string): Promise<Member | undefined> {
   await ensureDb()
   const row = await getClientRow(clientId)
   return row ? toMember(row) : undefined
+}
+
+/** Registra a presença no site (fica online sem entrar em sala). */
+export async function registerPresence(
+  clientId: string,
+  name: string,
+  photo: string | undefined,
+  bio: string | undefined,
+  cover: string | undefined,
+  userId: string | null,
+  ip: string | null = null
+): Promise<void> {
+  await ensureDb()
+  const now = nowMs()
+  const previous = await getClientRow(clientId)
+  if (previous) {
+    await getSql()`
+      UPDATE rtc_clients
+      SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null},
+          cover = ${cover ?? null}, user_id = ${userId}, last_seen = ${now}, left_at = NULL,
+          last_ip = COALESCE(${ip ?? null}, last_ip)
+      WHERE client_id = ${clientId}
+    `
+  } else {
+    await getSql()`
+      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, 'lobby', ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
+    `
+  }
 }
 
 export async function joinChannel(
@@ -167,14 +512,71 @@ export async function joinChannel(
   photo: string | undefined,
   bio: string | undefined,
   cover: string | undefined,
-  channel: ChannelId
-): Promise<
-  | { ok: true; channel: ChannelId; members: Member[] }
-  | { ok: false; reason: 'NAME_TAKEN' }
-> {
+  channel: ChannelId,
+  userId: string | null,
+  ip: string | null = null,
+  password?: string
+): Promise<{ ok: true; channel: ChannelId; members: Member[] }> {
   await ensureDb()
   const now = nowMs()
   const previous = await getClientRow(clientId)
+
+  // Salas personalizadas: precisam existir e, se forem privadas, exigem senha
+  // (ou, sem senha definida, só o dono entra). Convidados entram sem senha.
+  if (!FIXED_CHANNELS.includes(channel)) {
+    const row = await roomRowWithPassword(channel)
+    if (!row) throw new AppError('Sala não encontrada.', 404, 'ROOM_NOT_FOUND')
+    if (row.is_private) {
+      const invited = userId ? await hasRoomInvite(channel, userId) : false
+      if (!invited) {
+        if (!row.password) {
+          if (row.owner_id !== userId) {
+            throw new AppError('Esta sala é privada e só o dono pode entrar.', 403, 'ROOM_PRIVATE')
+          }
+        } else if (password?.trim() !== row.password) {
+          throw new AppError('Senha incorreta. Verifique e tente de novo.', 403, 'ROOM_PASSWORD')
+        }
+      }
+    }
+    // Limite de pessoas definido pelo dono (4/8/16). Não bloqueia quem já está na sala.
+    if (row.capacity > 0 && previous?.channel !== channel) {
+      const active = await getSql()<{ c: string | number }[]>`
+        SELECT COUNT(*) AS c FROM rtc_clients
+        WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${now - PRESENT_MS}
+      `
+      if (Number(active[0]?.c ?? 0) >= row.capacity) {
+        throw new AppError(
+          `Esta sala está cheia (limite de ${row.capacity} pessoas). Tente outra sala.`,
+          409,
+          'ROOM_FULL'
+        )
+      }
+    }
+  }
+
+  // Convidado que conseguiu entrar: o convite foi usado, remove-o.
+  if (userId && !FIXED_CHANNELS.includes(channel)) {
+    await clearRoomInvites(channel, userId)
+  }
+
+  // Limite por sala pública (para não sobrecarregar a sala de voz).
+  if ((await isPublicChannel(channel)) && previous?.channel !== channel) {
+    const active = await getSql()<{ c: string | number }[]>`
+      SELECT COUNT(*) AS c FROM rtc_clients
+      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${now - ANON_OFFLINE_MS}
+    `
+    if (Number(active[0]?.c ?? 0) >= MAX_PUBLIC_MEMBERS) {
+      throw new AppError(
+        `Esta sala está cheia (limite de ${MAX_PUBLIC_MEMBERS} pessoas). Tente outra sala.`,
+        409,
+        'ROOM_FULL'
+      )
+    }
+  }
+
+  // Limpa avisos de remoção antigos (ex.: sobraram de um recarregamento),
+  // para que o usuário não veja "Você foi removido da sala" ao entrar de novo.
+  await getSql()`DELETE FROM rtc_mailbox WHERE to_client = ${clientId} AND payload->>'type' = 'kicked'`
 
   if (previous && previous.channel === channel) {
     // Reentrada no MESMO canal. Se o usuário tinha saído (left_at preenchido),
@@ -184,7 +586,8 @@ export async function joinChannel(
     await getSql()`
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null}, cover = ${cover ?? null},
-          last_seen = ${now}, left_at = NULL
+          user_id = ${userId}, last_seen = ${now}, left_at = NULL, single_since = NULL,
+          last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
     if (wasAway) {
@@ -196,6 +599,8 @@ export async function joinChannel(
         photo,
         bio,
         cover,
+        isAnonymous: !userId,
+        userId: userId ?? undefined,
       }
       await notifyChannel(channel, () => ({ type: 'peer-joined', member: rejoined }), clientId)
     } else {
@@ -220,13 +625,15 @@ export async function joinChannel(
     await getSql()`
       UPDATE rtc_clients
       SET channel = ${channel}, name = ${name}, photo = ${photo ?? null},
-          bio = ${bio ?? null}, cover = ${cover ?? null}, last_seen = ${now}, left_at = NULL
+          bio = ${bio ?? null}, cover = ${cover ?? null}, user_id = ${userId},
+          last_seen = ${now}, left_at = NULL, single_since = NULL,
+          last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
   } else {
     await getSql()`
-      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at)
-      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, ${channel}, ${now}, ${now}, NULL)
+      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, ${channel}, ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
     `
   }
 
@@ -238,6 +645,8 @@ export async function joinChannel(
     photo,
     bio,
     cover,
+    isAnonymous: !userId,
+    userId: userId ?? undefined,
   }
 
   await notifyChannel(channel, () => ({ type: 'peer-joined', member }), clientId)
@@ -258,14 +667,14 @@ export async function leaveChannel(clientId: string): Promise<void> {
   if (!stored) return
   await notifyChannel(stored.channel as ChannelId, () => ({ type: 'peer-left', clientId }), clientId)
   await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${clientId}`
-  // Marca como offline na hora (mantém o registro p/ aparecer na lista Offline),
-  // mas também guarda o instante da saída para exibir "há X min/h".
+  // Sai da sala, mas CONTINUA online no site (presença segue pelo last_seen).
+  // Não marca como offline — quem fechar a página fica offline sozinho (last_seen).
   await getSql()`
     UPDATE rtc_clients
-    SET left_at = ${nowMs()}, last_seen = ${nowMs()}
+    SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}, single_since = NULL
     WHERE client_id = ${clientId}
   `
-  // Se sobrar só 1 pessoa no canal, inicia a contagem para desconexão (AFK).
+  // Se sobrar só 1 pessoa no canal, inicia a contagem para sair do canal (AFK).
   await refreshSoloState(stored.channel as ChannelId)
 }
 
@@ -301,7 +710,8 @@ export async function broadcastScreenKind(clientId: string, trackIds: string[]):
 
 export async function drainMailbox(clientId: string): Promise<MailboxMessage[]> {
   await ensureDb()
-  // Se estiver sozinho há 5min+, desconecta automaticamente (o aviso entra na caixa).
+  await runMaintenance()
+  // Libera a vaga de quem está SOZINHO na sala há 5min (oculto, sem aviso).
   await maybeKickSolo(clientId)
   const sql = getSql()
   const rows = await sql<{ id: string; payload: Record<string, unknown> }[]>`
@@ -310,11 +720,8 @@ export async function drainMailbox(clientId: string): Promise<MailboxMessage[]> 
   if (rows.length > 0) {
     await sql`DELETE FROM rtc_mailbox WHERE to_client = ${clientId}`
   }
-  // Atualiza a atividade apenas enquanto o usuário ainda está DENTRO de um canal
-  // (left_at IS NULL). Assim, depois que ele sai, o last_seen congela no instante
-  // da saída e o "há quanto tempo" (ex.: "há 3 min") passa a contar de verdade,
-  // em vez de ficar preso em "agora".
-  await sql`UPDATE rtc_clients SET last_seen = ${nowMs()} WHERE client_id = ${clientId} AND left_at IS NULL`
+  // Estar no site (fazendo polling) = estar online. Atualiza o last_seen sempre.
+  await sql`UPDATE rtc_clients SET last_seen = ${nowMs()} WHERE client_id = ${clientId}`
   return rows.map((r) => ({ ...r.payload, id: Number(r.id) }) as MailboxMessage)
 }
 
@@ -323,28 +730,35 @@ export async function addChat(
   authorId: string,
   author: string,
   text: string,
-  extra: { type?: ChatMessage['type']; audioUrl?: string } = {}
+  extra: { type?: ChatMessage['type']; audioUrl?: string } = {},
+  userId: string | null = null
 ): Promise<ChatMessage> {
   await ensureDb()
   const sender = await getClientRow(authorId)
+  const isAnonymous = !userId
+  const now = nowMs()
   const message: ChatMessage = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     channel,
     memberId: authorId,
     author: (sender?.name ?? author) || 'Anon',
     text,
-    time: nowMs(),
+    time: now,
     type: extra.type,
     audioUrl: extra.audioUrl,
     photo: sender?.photo ?? undefined,
     bio: sender?.bio ?? undefined,
     cover: sender?.cover ?? undefined,
+    isAnonymous,
+    userId: userId ?? undefined,
   }
+  const expiresAt = now + (isAnonymous ? ANON_MSG_MS : LOGGED_MSG_MS)
   await getSql()`
-    INSERT INTO rtc_chat (id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover)
+    INSERT INTO rtc_chat (id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover, is_anonymous, user_id, expires_at)
     VALUES (${message.id}, ${channel}, ${authorId}, ${message.author}, ${text},
             ${message.time}, ${extra.type ?? null}, ${extra.audioUrl ?? null},
-            ${sender?.photo ?? null}, ${sender?.bio ?? null}, ${sender?.cover ?? null})
+            ${sender?.photo ?? null}, ${sender?.bio ?? null}, ${sender?.cover ?? null},
+            ${isAnonymous}, ${userId ?? null}, ${expiresAt})
   `
   await notifyChannel(channel, () => ({ type: 'chat', message }))
   return message
@@ -369,6 +783,7 @@ export async function clearChatChannel(channel: ChannelId): Promise<number> {
 
 export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
   await ensureDb()
+  await runMaintenance(/*force=*/ true)
   type ChatRow = {
     id: string
     channel: string
@@ -381,9 +796,11 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
     photo: string | null
     bio: string | null
     cover: string | null
+    is_anonymous: boolean | null
+    user_id: string | null
   }
   const rows = await getSql()<ChatRow[]>`
-    SELECT id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover
+    SELECT id, channel, member_id, author, text, time, type, audio_url, photo, bio, cover, is_anonymous, user_id
     FROM rtc_chat WHERE channel = ${channel} ORDER BY time DESC LIMIT 100
   `
   // Reverte a ordem para cronológica.
@@ -399,14 +816,18 @@ export async function chatMessages(channel: ChannelId): Promise<ChatMessage[]> {
     photo: r.photo ?? undefined,
     bio: r.bio ?? undefined,
     cover: r.cover ?? undefined,
+    isAnonymous: r.is_anonymous !== false,
+    userId: r.user_id ?? undefined,
   }))
 }
 
 /**
- * Recalcula o estado "sozinho" de um canal após alguém entrar ou sair.
+ * Recalcula o estado "sozinho" de uma sala após alguém entrar ou sair.
  * - Se sobrar exatamente 1 pessoa, marca o instante em que ela ficou sozinha
- *   (apenas na primeira vez — o relógio não reinicia a cada heartbeat).
- * - Se houver 2+ pessoas (ou nenhuma), ninguém está "sozinho".
+ *   (só a primeira vez — o relógio não reinicia a cada batimento).
+ * - Se houver 2+ pessoas (ou nenhuma), ninguém está "sozinho": zera o contador.
+ * Isso faz o contador iniciar quando o usuário fica sozinho e ser zerado quando
+ * outra pessoa entra; ao voltar a ficar sozinho, ele recomeça do zero.
  */
 async function refreshSoloState(channel: ChannelId): Promise<void> {
   const rows = await channelRows(channel)
@@ -419,29 +840,39 @@ async function refreshSoloState(channel: ChannelId): Promise<void> {
   } else {
     await sql`
       UPDATE rtc_clients SET single_since = NULL
-      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - OFFLINE_MS}
+      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - PRESENT_MS}
     `
   }
 }
 
 /**
- * Se o usuário estiver SOZINHO no canal há 5 minutos ou mais, desconecta-o
- * automaticamente (AFK) e o avisa. Chamado no heartbeat (drainMailbox).
+ * Se o usuário estiver SOZINHO na sala há 5 minutos ou mais, libera a vaga
+ * automaticamente (oculto, sem aviso na tela). Regras:
+ * - Só conta enquanto o usuário estiver DENTRO da sala (1 pessoa = ele).
+ * - Quando outra pessoa entra (ex.: 2/4), o contador é zerado/desativado.
+ * - Se ela sair e ele voltar a ficar sozinho, o contador reinicia do zero.
+ * - Quem saiu manualmente (lobby) nunca é afetado.
+ * Chamado no heartbeat (drainMailbox).
  */
 async function maybeKickSolo(clientId: string): Promise<void> {
   const stored = await getClientRow(clientId)
-  if (!stored || stored.left_at !== null || stored.left_at !== undefined) return
+  // Sai cedo se não existir ou se já marcou saída (left_at preenchido).
+  if (!stored || stored.left_at != null) return
+  // Presença no lobby (quem só abriu o site e não entrou em sala)
+  // não deve ser "expulso" — isso só vale para salas públicas.
+  if (!(await isPublicChannel(stored.channel))) return
   const rows = await channelRows(stored.channel as ChannelId)
   if (rows.length !== 1) return
   const lone = rows[0]
   if (lone.client_id !== clientId) return
   if (lone.single_since == null) return
   if (nowMs() - Number(lone.single_since) < SOLO_KICK_MS) return
-  // Avisa antes de desconectar para o próprio usuário entender o motivo.
+  // Avisa o usuário antes de liberar a vaga (popup "você foi removido da sala").
   await enqueueTo(clientId, { type: 'kicked', reason: 'solo' })
+  await notifyChannel(stored.channel as ChannelId, () => ({ type: 'peer-left', clientId }), clientId)
   await getSql()`
     UPDATE rtc_clients
-    SET left_at = ${nowMs()}, last_seen = ${nowMs()}, single_since = NULL
+    SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}, single_since = NULL
     WHERE client_id = ${clientId}
   `
   await getSql()`DELETE FROM rtc_screen_tracks WHERE client_id = ${clientId}`
@@ -463,7 +894,7 @@ export async function removeOfflineMember(clientId: string): Promise<Member | un
 export async function removeAllOffline(): Promise<Member[]> {
   await ensureDb()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
     FROM rtc_clients
     WHERE left_at IS NOT NULL OR last_seen <= ${nowMs() - OFFLINE_MS}
   `
@@ -481,6 +912,33 @@ export async function removeAllOffline(): Promise<Member[]> {
 export async function markSeen(clientId: string): Promise<void> {
   await ensureDb()
   await getSql()`UPDATE rtc_clients SET last_seen = ${nowMs()} WHERE client_id = ${clientId}`
+}
+
+/** Agenda a exclusão de um anônimo daqui a 3 dias; devolve o instante agendado. */
+export async function scheduleDelete(clientId: string): Promise<number | null> {
+  await ensureDb()
+  const at = nowMs() + DELETE_GRACE_MS
+  const res = await getSql()`
+    UPDATE rtc_clients SET delete_scheduled_at = ${at}, last_seen = ${nowMs()}
+    WHERE client_id = ${clientId}
+  `
+  return res.count && res.count > 0 ? at : null
+}
+
+/** Cancela uma exclusão agendada (o usuário "se arrependeu"). */
+export async function cancelDelete(clientId: string): Promise<void> {
+  await ensureDb()
+  await getSql()`UPDATE rtc_clients SET delete_scheduled_at = NULL WHERE client_id = ${clientId}`
+}
+
+/** Devolve o instante da exclusão agendada de um anônimo (ou null). */
+export async function getDeleteScheduledAt(clientId: string): Promise<number | null> {
+  await ensureDb()
+  const rows = await getSql()<{ delete_scheduled_at: string | number | null }[]>`
+    SELECT delete_scheduled_at FROM rtc_clients WHERE client_id = ${clientId}
+  `
+  const v = rows[0]?.delete_scheduled_at
+  return v == null ? null : Number(v)
 }
 
 /** Transmite um "mudo global" de um usuário para todos os clientes online (poder de admin). */

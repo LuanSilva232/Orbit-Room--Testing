@@ -3,7 +3,9 @@ import 'server-only'
 import { cookies } from 'next/headers'
 import { createHash, randomBytes } from 'crypto'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import type { Sql } from 'postgres'
 import { ensureDb, getSql } from '@/db/index'
+import { generateFriendCode } from './friend-code'
 
 export const SESSION_COOKIE = 'orbit_session'
 export const SESSION_DAYS = 30
@@ -63,6 +65,7 @@ export interface SanitizedUser {
   bio: string | null
   photo: string | null
   cover: string | null
+  friendCode: string | null
   rooms: unknown[]
 }
 
@@ -192,7 +195,8 @@ export async function completeGoogleLogin(code: string, state: string): Promise<
   // Cria/reutiliza a conta e vincula (provider, sub) numa transação.
   const sessionToken = randomStr(32)
   const sessionId = randomStr(12)
-  const userId = await sql.begin(async (tx) => {
+  const userId = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Sql
     const [existing] = await tx`
       SELECT user_id FROM oauth_accounts
       WHERE provider = 'google' AND provider_subject = ${sub}
@@ -209,8 +213,8 @@ export async function completeGoogleLogin(code: string, state: string): Promise<
     } else {
       uid = randomStr(16)
       await tx`
-        INSERT INTO users (id, email, email_verified_at, status, display_name, bio, photo, rooms, created_at, updated_at)
-        VALUES (${uid}, ${email}, ${now}, 'active', ${displayName}, null, ${picture}, '[]'::jsonb, ${now}, ${now})
+        INSERT INTO users (id, email, email_verified_at, status, display_name, bio, photo, rooms, friend_code, created_at, updated_at)
+        VALUES (${uid}, ${email}, ${now}, 'active', ${displayName}, null, ${picture}, '[]'::jsonb, ${generateFriendCode()}, ${now}, ${now})
       `
     }
     await tx`
@@ -240,7 +244,7 @@ export async function getCurrentUser(): Promise<SanitizedUser | null> {
   const now = Date.now()
   await ensureDb()
   const rows = await getSql()`
-    SELECT u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.rooms, u.status
+    SELECT u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.friend_code, u.rooms, u.status
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ${sha256Hex(token)}
@@ -257,6 +261,7 @@ export async function getCurrentUser(): Promise<SanitizedUser | null> {
     bio: (row.bio as string | null) ?? null,
     photo: (row.photo as string | null) ?? null,
     cover: (row.cover as string | null) ?? null,
+    friendCode: (row.friend_code as string | null) ?? null,
     rooms: Array.isArray(row.rooms) ? (row.rooms as unknown[]) : [],
   }
 }

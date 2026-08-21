@@ -9,12 +9,30 @@ export function Avatar({
   photo,
   size = 80,
   className = '',
+  isAnonymous = false,
 }: {
   name?: string
   photo?: string
   size?: number
   className?: string
+  isAnonymous?: boolean
 }) {
+  // Usuário anônimo (sem conta Google): vira um fantasma de easter egg. 👻
+  if (isAnonymous) {
+    return (
+      <div
+        style={{ width: size, height: size }}
+        className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400/30 to-slate-700/40 ring-2 ring-indigo-300/40 ${className}`}
+      >
+        <span
+          translate="no"
+          style={{ fontSize: Math.max(12, Math.round(size * 0.55)), lineHeight: 1 }}
+        >
+          👻
+        </span>
+      </div>
+    )
+  }
   if (photo) {
     return (
       <img
@@ -59,7 +77,7 @@ export function Modal({
   if (!open) return null
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -115,6 +133,48 @@ export function ProfileViewModal({
             Esta pessoa ainda não escreveu uma bio.
           </p>
         )}
+
+        <button
+          onClick={onClose}
+          className="mt-5 w-full rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-400"
+        >
+          Fechar
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+/** Modal exibido ao tentar ver o perfil de um usuário anônimo (sem conta Google). */
+export function AnonProfileModal({
+  name,
+  onClose,
+}: {
+  name?: string
+  onClose: () => void
+}) {
+  return (
+    <Modal open onClose={onClose}>
+      <div className="flex flex-col items-center text-center">
+        <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-slate-800 text-4xl ring-4 ring-slate-900">
+          👻
+        </div>
+
+        <h3 className="mt-4 text-xl font-extrabold tracking-tight">{name || 'Anônimo'}</h3>
+
+        <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber-300">
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+          Usuário anônimo
+        </div>
+
+        <p className="mt-4 w-full rounded-2xl bg-white/5 px-4 py-3 text-sm leading-relaxed text-slate-300 ring-1 ring-white/10">
+          Este usuário ainda não tem conta. Como ele não entrou com o Google, não há um
+          perfil com nome, foto e bio para mostrar.
+        </p>
+
+        <p className="mt-3 w-full rounded-2xl bg-amber-500/10 px-4 py-3 text-sm leading-relaxed text-amber-200 ring-1 ring-amber-400/20">
+          Para liberar o perfil dele, ele precisa fazer login com o Google.
+        </p>
 
         <button
           onClick={onClose}
@@ -240,6 +300,18 @@ export function ProfileEditModal({
         <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-br from-indigo-500/45 via-purple-500/25 to-fuchsia-500/35" />
       )}
 
+      {/* Fechar sempre acessível no mobile */}
+      <button
+        type="button"
+        onClick={onClose}
+        disabled={busy}
+        aria-label="Fechar"
+        className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-slate-900/70 text-lg text-slate-200 ring-1 ring-white/20 backdrop-blur transition hover:bg-slate-800 disabled:opacity-40"
+      >
+        ✕
+      </button>
+
+      <div className="max-h-[calc(100dvh-9rem)] overflow-y-auto pr-1">
       <input
         ref={fileRef}
         type="file"
@@ -292,7 +364,7 @@ export function ProfileEditModal({
         onChange={(e) => setName(e.target.value)}
         placeholder="Digite seu nome"
         maxLength={40}
-        className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
+        className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
       />
 
       {/* Bio */}
@@ -302,7 +374,7 @@ export function ProfileEditModal({
         onChange={(e) => setBio(e.target.value)}
         placeholder="Conte um pouco sobre você (opcional)"
         rows={3}
-        className="mt-1.5 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
+        className="mt-1.5 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
       />
 
       {/* Foto de fundo (capa) */}
@@ -347,6 +419,10 @@ export function ProfileEditModal({
           Salvar
         </button>
       </div>
+<<<<<<< HEAD
+=======
+      </div>
+>>>>>>> d0320ef3b0c676a3463f056ea6f2826f7012afd1
       </>
       ) : (
       <div className="relative py-6 text-center">

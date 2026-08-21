@@ -13,12 +13,16 @@ export function getSql(): Sql {
   const url = process.env.DATABASE_URL
   if (!url) throw new Error('DATABASE_URL não configurada')
   // prepare:false evita prepared statements reutilizados de forma incorreta atrás de poolers.
-  // max:4 mantém mais de uma conexão em voo — um `max:1` fazia o pool inteiro
-  // travar quando uma única consulta travava no banco em nuvem.
+  // max: mantém várias conexões em voo. Um pool muito pequeno (ex.: max:4) satura
+  // sob rajada de usuários simultâneos e pode ficar com conexões presas, travando
+  // todas as requisições com banco. O pool em nuvem aceita bem mais de 20 conexões.
+  // max_lifetime recicla conexões periodicamente, evitando que conexões antigas/
+  // quebradas fiquem presas no pool para sempre.
   client = postgres(url, {
-    max: 4,
+    max: 10,
     idle_timeout: 20,
     connect_timeout: 10,
+    max_lifetime: 30 * 60,
     prepare: false,
   })
   return client
@@ -53,6 +57,18 @@ export function ensureDb(): Promise<void> {
           ADD COLUMN IF NOT EXISTS cover text
       `
       await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS user_id text
+      `
+      await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS delete_scheduled_at bigint
+      `
+      await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS last_ip text
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS rtc_mailbox (
           id        bigserial PRIMARY KEY,
           to_client text NOT NULL,
@@ -80,6 +96,18 @@ export function ensureDb(): Promise<void> {
       await sql`
         ALTER TABLE rtc_chat
           ADD COLUMN IF NOT EXISTS cover text
+      `
+      await sql`
+        ALTER TABLE rtc_chat
+          ADD COLUMN IF NOT EXISTS is_anonymous boolean NOT NULL DEFAULT false
+      `
+      await sql`
+        ALTER TABLE rtc_chat
+          ADD COLUMN IF NOT EXISTS user_id text
+      `
+      await sql`
+        ALTER TABLE rtc_chat
+          ADD COLUMN IF NOT EXISTS expires_at bigint
       `
       await sql`
         CREATE INDEX IF NOT EXISTS rtc_chat_channel_idx
@@ -111,6 +139,87 @@ export function ensureDb(): Promise<void> {
       await sql`
         ALTER TABLE users
           ADD COLUMN IF NOT EXISTS cover text
+      `
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS delete_scheduled_at bigint
+      `
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS last_ip text
+      `
+      // --- Sistema social (amigos, convites e seguidores) ---
+      // Código de amigo de 6 caracteres (letras + números), único por conta.
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS friend_code text
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_requests (
+          id         text PRIMARY KEY,
+          from_id    text NOT NULL,
+          to_id      text NOT NULL,
+          status     text NOT NULL DEFAULT 'pending',
+          created_at bigint NOT NULL,
+          UNIQUE (from_id, to_id)
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS social_requests_to_idx
+          ON social_requests (to_id, status)
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_friends (
+          user_a  text NOT NULL,
+          user_b  text NOT NULL,
+          created_at bigint NOT NULL,
+          PRIMARY KEY (user_a, user_b)
+        )
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_follows (
+          follower_id text NOT NULL,
+          followee_id text NOT NULL,
+          created_at   bigint NOT NULL,
+          PRIMARY KEY (follower_id, followee_id)
+        )
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS rooms (
+          id         text PRIMARY KEY,
+          name       text NOT NULL,
+          is_private boolean NOT NULL DEFAULT false,
+          owner_id   text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          password   text,
+          created_at bigint NOT NULL
+        )
+      `
+      await sql`
+        ALTER TABLE rooms ADD COLUMN IF NOT EXISTS password text
+      `
+      await sql`
+        ALTER TABLE rooms ADD COLUMN IF NOT EXISTS capacity integer NOT NULL DEFAULT 0
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS rooms_owner_idx
+          ON rooms (owner_id)
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS rooms_public_idx
+          ON rooms (is_private)
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS room_invites (
+          id         text PRIMARY KEY,
+          room_id    text NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+          from_id    text NOT NULL,
+          to_id      text NOT NULL,
+          created_at bigint NOT NULL
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS room_invites_to_idx
+          ON room_invites (to_id, created_at)
       `
       await sql`
         CREATE TABLE IF NOT EXISTS oauth_accounts (

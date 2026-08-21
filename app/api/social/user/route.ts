@@ -1,43 +1,26 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { getCurrentUser } from '@/lib/auth'
 import { getSql } from '@/db/index'
-import { generateFriendCode } from '@/lib/friend-code'
+import * as social from '@/lib/social'
 
-// Perfil salvo na conta (nome, bio, foto e salas).
-export async function GET() {
+// Perfil social de outro usuário: relação, listas de amigos/seguidores e presença.
+export async function GET(req: NextRequest) {
   const user = await getCurrentUser()
   if (!user) {
     return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 })
   }
-  const rows = await getSql()<{ delete_scheduled_at: string | number | null }[]>`
-    SELECT delete_scheduled_at FROM users WHERE id = ${user.id}
-  `
-  const deleteScheduledAt = rows[0]?.delete_scheduled_at
-  // Garante o código de amigo (contas criadas antes do recurso).
-  let friendCode = user.friendCode
-  if (!friendCode) {
-    friendCode = generateFriendCode()
-    await getSql()`
-      UPDATE users SET friend_code = ${friendCode} WHERE id = ${user.id}
-    `
+  const url = new URL(req.url)
+  const userId = url.searchParams.get('userId') ?? ''
+  if (!userId) {
+    return NextResponse.json({ error: 'INVALID_INPUT' }, { status: 400 })
   }
-  const social = await getSql()<{ c: string | number }[]>`
-    SELECT COUNT(*) AS c FROM social_friends WHERE (user_a = ${user.id} OR user_b = ${user.id})
-  `
-  const friendsCount = Number(social[0]?.c ?? 0)
-  return NextResponse.json({
-    profile: {
-      name: user.name,
-      bio: user.bio,
-      photo: user.photo,
-      cover: user.cover,
-      rooms: user.rooms,
-      friendCode,
-      friendsCount,
-      deleteScheduledAt:
-        deleteScheduledAt == null ? null : Number(deleteScheduledAt),
-    },
-  })
+  try {
+    return NextResponse.json(await social.getTargetSocial(user.id, userId))
+  } catch (error) {
+    const status = error instanceof Error && 'status' in error ? Number((error as { status?: number }).status) : 500
+    const message = error instanceof Error ? error.message : 'Erro interno'
+    return NextResponse.json({ error: message }, { status: Number.isFinite(status) ? status : 500 })
+  }
 }
 
 export async function PUT(req: NextRequest) {
