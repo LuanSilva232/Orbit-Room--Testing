@@ -805,6 +805,11 @@ export function ShareRoom() {
   const bind = useCallback((el: HTMLMediaElement | null, stream: MediaStream | null) => {
     if (!el || !stream) return
     if (el.srcObject !== stream) el.srcObject = stream
+    // Mantém a reprodução automática sempre ligada. Ao reconectar um elemento
+    // (ex.: ao sair da tela cheia), garante que o vídeo volte a rodar em tempo
+    // real em vez de ficar congelado esperando um "play" manual.
+    el.autoplay = true
+    if (typeof el.play === 'function') void el.play().catch(() => undefined)
     // Guarda o elemento para aplicar mudanças de volume em tempo real.
     mediaElsRef.current.add(el)
     // Volume global do usuário (ajustado em Configurações → Áudio e vídeo).
@@ -828,6 +833,30 @@ export function ShareRoom() {
       if (typeof el.volume === 'number') el.volume = v
     })
   }, [settings.volume])
+
+  // Ao sair da tela cheia (desktop ou mobile/iOS), o navegador costuma pausar o
+  // vídeo — o que congela o quadradinho numa imagem parada. Este ouvinte retoma
+  // automaticamente a reprodução de todos os participantes assim que a tela
+  // cheia é fechada, para a câmera continuar em tempo real sem precisar de play.
+  useEffect(() => {
+    const resumeOnExit = () => {
+      if (document.fullscreenElement) return
+      mediaElsRef.current.forEach((el) => {
+        try {
+          el.autoplay = true
+          if (typeof el.play === 'function' && el.paused) void el.play().catch(() => undefined)
+        } catch {
+          /* elemento já removido do DOM */
+        }
+      })
+    }
+    document.addEventListener('fullscreenchange', resumeOnExit)
+    document.addEventListener('webkitfullscreenchange', resumeOnExit)
+    return () => {
+      document.removeEventListener('fullscreenchange', resumeOnExit)
+      document.removeEventListener('webkitfullscreenchange', resumeOnExit)
+    }
+  }, [])
 
   // Avisa os demais quais trilhas de vídeo são compartilhamento de tela.
   const broadcastScreenKind = useCallback((trackIds: string[]) => {
