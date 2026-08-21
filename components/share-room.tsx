@@ -1370,8 +1370,17 @@ export function ShareRoom() {
     setInviteRoom(room)
     setInviteLoading(true)
     try {
-      const res = await apiClient.get<{ friends: { id: string; displayName: string; photo: string | null; online: boolean }[] }>('/api/social')
-      setInviteFriends(res.success ? res.data?.friends ?? [] : [])
+      const res = await apiClient.get<{ friends: { id: string; name: string; photo: string | null; online: boolean }[] }>('/api/social')
+      const friends =
+        res.success && res.data?.friends
+          ? res.data.friends.map((f) => ({
+              id: f.id,
+              displayName: f.name,
+              photo: f.photo,
+              online: f.online,
+            }))
+          : []
+      setInviteFriends(friends)
     } finally {
       setInviteLoading(false)
     }
