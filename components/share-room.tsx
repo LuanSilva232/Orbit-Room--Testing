@@ -825,6 +825,10 @@ export function ShareRoom() {
   const screenStreamRef = useRef<MediaStream | null>(null)
   // Limpeza da correção de orientação da câmera (parar canvas/stream).
   const orientStopRef = useRef<(() => void) | null>(null)
+  // Última vez que a câmera foi ligada/desligada (usado para evitar religação
+  // rápida, que faz o vídeo piscar no outro lado).
+  const lastCamToggleAtRef = useRef(0)
+  const CAM_TOGGLE_COOLDOWN = 2500
   const clientIdRef = useRef('')
   const nameRef = useRef('')
   const channelRef = useRef<ChannelId>('sala-1')
@@ -1753,6 +1757,14 @@ export function ShareRoom() {
   }, [micOn, camOn, reacquire])
 
   const toggleCam = useCallback(() => {
+    const now = Date.now()
+    // Trava a religação rápida: desligar e religar em menos de 2,5s faz a câmera
+    // piscar/sumir para o outro lado. Exige um respiro entre os toggles.
+    if (!camOn && now - lastCamToggleAtRef.current < CAM_TOGGLE_COOLDOWN) {
+      toast.info('Aguarde um instante para religar a câmera')
+      return
+    }
+    lastCamToggleAtRef.current = now
     const next = !camOn
     setCamOn(next)
     // Não desmuta o microfone se ele já estava mudo.
