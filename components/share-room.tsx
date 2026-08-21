@@ -603,8 +603,8 @@ export function ShareRoom() {
   const SETTINGS_KEY = 'share_room_settings_v2'
   const DEFAULT_SETTINGS: Settings = {
     volume: 1,
-    noiseSuppression: false,
-    echoCancellation: false,
+    noiseSuppression: true,
+    echoCancellation: true,
     micSensitivity: false,
     micGain: 1,
     cameraEnhance: false,
@@ -619,7 +619,14 @@ export function ShareRoom() {
     if (typeof window === 'undefined') return DEFAULT_SETTINGS
     try {
       const raw = localStorage.getItem(SETTINGS_KEY)
-      if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) }
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<Settings>
+        // Eco e ruído ficam sempre ativos ao entrar (a resolução não dá pra
+        // melhorar o áudio com eles desligados). Só desliga durante a sessão.
+        saved.noiseSuppression = true
+        saved.echoCancellation = true
+        return { ...DEFAULT_SETTINGS, ...saved }
+      }
     } catch {
       /* noop */
     }
@@ -885,25 +892,27 @@ export function ShareRoom() {
   // Ordem de ativação dos compartilhamentos de tela (quem começou primeiro).
   const screenOrderRef = useRef<string[]>([])
 
+  // Exibição "tela cheia": retângulo em pé (celular, com laterais pretas) quando
+  // a câmera está em retrato, ou tela cheia normal quando está deitada (paisagem).
+  // A orientação é detectada a partir do próprio vídeo e acompanha ao vivo a
+  // rotação do celular de quem transmite.
+  const [expandedTileId, setExpandedTileId] = useState<string | null>(null)
+  const [expandedPortrait, setExpandedPortrait] = useState(false)
+  const handleExpandedSize = useCallback((video: HTMLVideoElement) => {
+    const w = video.videoWidth || 0
+    const h = video.videoHeight || 0
+    if (w > 0 && h > 0) setExpandedPortrait(w < h)
+  }, [])
   const toggleTileFullscreen = useCallback((id: string) => {
-    const el = tileElsRef.current[id]
-    if (!el) return
-    const video = el.querySelector('video') as
-      | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
-      | null
-    if (document.fullscreenElement === el) {
-      void document.exitFullscreen?.()
-      return
-    }
-    // No mobile (ex.: iOS, que também vale para o Chrome do iPhone) a tela cheia
-    // só funciona sobre um <video>. Prioriza esse método e cai no padrão do desktop.
-    if (video && typeof video.webkitEnterFullscreen === 'function') {
-      video.webkitEnterFullscreen()
-      return
-    }
-    void el.requestFullscreen?.().catch(() => {
-      toast.error('Tela cheia indisponível neste navegador')
+    setExpandedTileId((prev) => {
+      if (prev === id) return null
+      return id
     })
+    const el = tileElsRef.current[id]
+    const video = el?.querySelector('video') as HTMLVideoElement | null
+    const w = video?.videoWidth || 0
+    const h = video?.videoHeight || 0
+    setExpandedPortrait(w > 0 && h > 0 ? w < h : false)
   }, [])
 
   // Vira a câmera entre frontal/traseira, recapturando apenas o vídeo local.
@@ -2372,6 +2381,16 @@ export function ShareRoom() {
               className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/50 text-sm text-white transition hover:bg-black/70"
             >
               {screenMuted[tile.id] ? '🔇' : '🔊'}
+            </button>
+          )}
+          {/* Virar câmera — aparece só para o dono da câmera (frontal/traseira) */}
+          {tile.isLocal && !tile.isScreen && camOn && (
+            <button
+              title={t('cameraFlip')}
+              onClick={flipCamera}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/50 text-sm text-white transition hover:bg-black/70"
+            >
+              🔄
             </button>
           )}
           <button
@@ -4459,6 +4478,87 @@ export function ShareRoom() {
           </div>
         </div>
       )}
+      {/* Visualização "tela cheia" que acompanha a orientação da câmera */}
+      {expandedTileId &&
+        (() => {
+          const tile = tiles.find((t) => t.id === expandedTileId)
+          if (!tile || !tile.hasVideo || !tile.stream) return null
+          const isScreen = !!tile.isScreen
+          const isLocal = !!tile.isLocal
+          const muted = isLocal ? !micOn : tile.muted
+          const portrait = !isScreen && expandedPortrait
+          return (
+            <div
+              className="fixed inset-0 z-[160] flex items-center justify-center bg-black"
+              onClick={() => setExpandedTileId(null)}
+              style={portrait ? { padding: '1rem' } : undefined}
+            >
+              <div
+                className={`relative flex flex-col overflow-hidden bg-black ${
+                  portrait ? 'rounded-2xl border border-white/15 shadow-2xl' : 'h-full w-full'
+                }`}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  aspectRatio: portrait ? '9 / 16' : undefined,
+                  width: portrait ? 'auto' : '100%',
+                  height: portrait ? 'min(86vh, 740px)' : '100%',
+                  maxWidth: portrait ? '94vw' : '100%',
+                }}
+              >
+                <video
+                  autoPlay
+                  playsInline
+                  muted={isLocal || (isScreen ? !!screenMuted[tile.id] : true)}
+                  style={{ filter: 'contrast(1.06) saturate(1.12) brightness(1.02)' }}
+                  className="h-full w-full object-contain"
+                  ref={(el) => {
+                    bind(el, tile.stream)
+                    if (el) handleExpandedSize(el)
+                  }}
+                  onLoadedMetadata={(e) => handleExpandedSize(e.currentTarget)}
+                  onResize={(e) => handleExpandedSize(e.currentTarget)}
+                />
+                <div className="absolute right-2 top-2 flex gap-1.5">
+                  {isLocal && !isScreen && camOn && (
+                    <button
+                      onClick={flipCamera}
+                      title={t('cameraFlip')}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/50 text-base text-white transition hover:bg-black/70"
+                    >
+                      🔄
+                    </button>
+                  )}
+                  {!isLocal && !isScreen && (
+                    <button
+                      onClick={() =>
+                        setMutedPeers((prev) => ({
+                          ...prev,
+                          [tile.peerId as string]: !(mutedPeers[tile.peerId as string] ?? false),
+                        }))
+                      }
+                      title={muted ? 'Desmutar' : 'Mutar'}
+                      className={`flex h-9 w-9 items-center justify-center rounded-lg text-base backdrop-blur transition ${
+                        muted ? 'bg-red-500/80 hover:bg-red-500' : 'bg-black/50 hover:bg-black/70'
+                      }`}
+                    >
+                      {muted ? '🔇' : '🔊'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setExpandedTileId(null)}
+                    title="Fechar"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/50 text-base text-white transition hover:bg-black/70"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-0.5 text-[11px] text-white">
+                  {tile.name} {!isLocal && muted ? '· 🔇' : ''}
+                </span>
+              </div>
+            </div>
+          )
+        })()}
     </div>
   )
 }
