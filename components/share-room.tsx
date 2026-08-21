@@ -1635,6 +1635,8 @@ export function ShareRoom() {
       if (settings.silentMode) {
         setMicOn(false)
       } else {
+        // Padrão: entra com o microfone ligado (fala direto). Quem quer entrar
+        // mudo usa o "modo silencioso" nas configurações.
         await reacquire(false)
       }
       setChat([])
