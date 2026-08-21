@@ -130,6 +130,15 @@ const QUALITY_BITRATES: Record<Quality, number> = {
   alta: 2_500_000, // ~2.5 Mbps
 }
 
+// Ajustes de nitidez da câmera (extensões de alguns navegadores). Quem não
+// suporta ignora silenciosamente e mantém a imagem original.
+const CAMERA_ENHANCEMENT: MediaTrackConstraints = {
+  sharpness: 1,
+  contrast: 1.06,
+  saturation: 1.12,
+  brightness: 1.03,
+} as unknown as MediaTrackConstraints
+
 // Interruptor (switch) reutilizável das Configurações.
 function SwitchRow({
   checked,
@@ -151,7 +160,7 @@ function SwitchRow({
     >
       <span>
         <span className="block text-sm font-bold">{title}</span>
-        {desc && <span className="block text-xs text-slate-400">{desc}</span>}
+        {desc && <span className="block text-xs text-slate-200">{desc}</span>}
       </span>
       <span
         className={`relative h-5 w-9 shrink-0 rounded-full transition ${
@@ -333,6 +342,10 @@ const STRINGS = {
   noiseEchoHint: ['Desligados por padrão para a voz sair natural e clara.', 'Off by default so your voice stays natural and clear.'],
   micSensitivity: ['Sensibilidade do microfone', 'Microphone sensitivity'],
   micSensitivityDesc: ['Ajusta o quanto o microfone capta. Desligado = som natural.', 'Adjusts how much the mic picks up. Off = natural sound.'],
+  cameraLabel: ['Câmera', 'Camera'],
+  cameraEnhance: ['Melhorar nitidez', 'Enhance sharpness'],
+  cameraEnhanceDesc: ['Deixa a imagem mais nítida e com mais qualidade na chamada.', 'Makes the image sharper and higher quality during calls.'],
+  cameraFlip: ['Virar câmera (frontal/traseira)', 'Flip camera (front/back)'],
   aboutText: [
     'O Orbit Room é uma plataforma de conversas ao vivo em voz e vídeo, criada para aproximar pessoas e reunir todo mundo em salas compartilhadas em tempo real — não importa a distância.\n\n#Por que o Orbit Room existe?\n\nEstamos sempre conectados, mas muitas vezes distantes. O Orbit Room nasceu para devolver ao mundo digital o calor de uma conversa cara a cara: um lugar simples em que basta entrar numa sala para se sentir junto de verdade.\n\n• Reunir pessoas ao redor de uma conversa viva, sem fricção\n• Trazer de volta a sensação de “estar na mesma sala”, de qualquer lugar\n• Tornar as conversas reais acessíveis e naturais para todos\n\nMais do que um aplicativo de chamadas, é um espaço de presença e conexão — feito para quem quer conversar, e não apenas conectar.',
     'Orbit Room is a live voice and video conversation platform, created to bring people together and gather everyone in shared rooms in real time — no matter the distance.\n\n#Why does Orbit Room exist?\n\nWe are always connected, yet often distant. Orbit Room was born to bring the warmth of a face-to-face conversation back to the digital world: a simple place where you just join a room to truly feel together.\n\n• Bring people together around a living conversation, without friction\n• Bring back the feeling of “being in the same room”, from anywhere\n• Make real conversations accessible and natural for everyone\n\nMore than a calling app, it is a space for presence and connection — made for those who want to talk, not just connect.',
@@ -588,19 +601,23 @@ export function ShareRoom() {
     echoCancellation: boolean
     micSensitivity: boolean
     micGain: number
+    cameraEnhance: boolean
+    cameraFacing: 'user' | 'environment'
     defaultQuality: Quality
     theme: 'dark' | 'light'
     notifications: boolean
     silentMode: boolean
     language: 'pt' | 'en'
   }
-  const SETTINGS_KEY = 'share_room_settings'
+  const SETTINGS_KEY = 'share_room_settings_v2'
   const DEFAULT_SETTINGS: Settings = {
     volume: 1,
     noiseSuppression: false,
     echoCancellation: false,
     micSensitivity: false,
     micGain: 1,
+    cameraEnhance: false,
+    cameraFacing: 'user',
     defaultQuality: 'auto',
     theme: 'dark',
     notifications: false,
@@ -724,15 +741,9 @@ export function ShareRoom() {
     }
     setIsAdmin(true)
     setAdminOn(true)
-    localStorage.setItem('share_room_admin', '1')
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('admin-changed', { detail: { isAdmin: true } }))
     }
-  }, [])
-
-  useEffect(() => {
-    const stored = localStorage.getItem('share_room_admin')
-    if (stored === '1') setIsAdmin(true)
   }, [])
 
   const engineRef = useRef<RtcEngine | null>(null)
@@ -904,6 +915,45 @@ export function ShareRoom() {
     })
   }, [])
 
+  // Tile atualmente em tela cheia (para mostrar controles extras, ex.: virar câmera).
+  const [fullscreenTileId, setFullscreenTileId] = useState<string | null>(null)
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      let id: string | null = null
+      for (const [tid, el] of Object.entries(tileElsRef.current)) {
+        if (document.fullscreenElement === el) {
+          id = tid
+          break
+        }
+      }
+      setFullscreenTileId(id)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  // Vira a câmera entre frontal/traseira, recapturando apenas o vídeo local.
+  const flipCamera = useCallback(() => {
+    if (!camOn) return
+    const next = settings.cameraFacing === 'environment' ? 'user' : 'environment'
+    setSetting('cameraFacing', next)
+    toast.info(next === 'environment' ? 'Câmera traseira' : 'Câmera frontal')
+  }, [camOn, settings.cameraFacing, setSetting])
+
+  // Aplica as melhorias de nitidez na trilha de vídeo ativa (sem recapturar o mic).
+  useEffect(() => {
+    const stream = localStreamRef.current
+    const vtrack = stream?.getVideoTracks()[0]
+    if (!vtrack) return
+    void vtrack
+      .applyConstraints({
+        advanced: settings.cameraEnhance ? [CAMERA_ENHANCEMENT] : [],
+      })
+      .catch(() => {
+        /* nem todos os navegadores aceitam esses ajustes */
+      })
+  }, [settings.cameraEnhance])
+
   // ----- local stream -----
   const replaceLocalStream = useCallback((stream: MediaStream | null) => {
     const engine = engineRef.current
@@ -946,7 +996,10 @@ export function ShareRoom() {
   const applyMicGain = useCallback(
     (stream: MediaStream): MediaStream => {
       const audioTrack = stream.getAudioTracks()[0]
-      const doGain = settings.micSensitivity && Math.abs(settings.micGain - 1) > 0.001 && audioTrack
+      // Cria a cadeia sempre que a sensibilidade está ligada — mesmo em 1x — para
+      // que o slider continue ajustando o ganho em tempo real, sem recapturar o
+      // microfone a cada movimento.
+      const doGain = settings.micSensitivity && audioTrack
       if (!doGain) {
         if (micGainRef.current) {
           try {
@@ -994,10 +1047,15 @@ export function ShareRoom() {
     async (withVideo: boolean, keepMicMuted = false) => {
       if (!inCallRef.current) return
       try {
-        const videoConstraints =
-          settings.defaultQuality === 'auto'
+        const videoConstraints: MediaTrackConstraints = {
+          ...(settings.defaultQuality === 'auto'
             ? QUALITY_CONSTRAINTS.auto
-            : QUALITY_CONSTRAINTS[settings.defaultQuality]
+            : QUALITY_CONSTRAINTS[settings.defaultQuality]),
+          facingMode: { ideal: settings.cameraFacing === 'environment' ? 'environment' : 'user' },
+        }
+        if (settings.cameraEnhance) {
+          videoConstraints.advanced = [CAMERA_ENHANCEMENT]
+        }
         // Parâmetros de captura: eco/ruído só ativos quando o usuário escolher.
         // autoGainControl fica ativo para dar volume natural sem abafar; quando a
         // sensibilidade está ligada, o ganho é controlado pelo WebAudio abaixo.
@@ -1019,7 +1077,7 @@ export function ShareRoom() {
         toast.error('Não foi possível acessar microfone/câmera')
       }
     },
-    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.defaultQuality, applyMicGain, applyQualityToStreams]
+    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.cameraEnhance, settings.cameraFacing, settings.defaultQuality, applyMicGain, applyQualityToStreams]
   )
 
   // Quando o usuário liga/desliga o corte de ruído, o eco ou a sensibilidade,
@@ -1029,6 +1087,13 @@ export function ShareRoom() {
     void reacquire(camOn, !micOn)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.noiseSuppression, settings.echoCancellation, settings.micSensitivity])
+
+  // Quando o usuário vira a câmera (frontal/traseira), recaptura o vídeo local.
+  useEffect(() => {
+    if (!inCallRef.current || !camOn) return
+    void reacquire(true, !micOn)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.cameraFacing])
 
   // O ganho (slider) é recalibrado em tempo real no nó já ativo, sem recapturar
   // o microfone. Só precisa recapturar ao ligar/desligar a sensibilidade (acima).
@@ -1852,50 +1917,6 @@ export function ShareRoom() {
     if (!res.success) toast.error(res.error)
   }, [persistProfileToServer, registerPresence])
 
-  const resetMyName = useCallback(async () => {
-    if (!authUserRef.current) {
-      toast.error('Faça login com o Google para trocar seu nome.')
-      return
-    }
-    const next = (window.prompt('Qual nome você quer usar?') || '').trim()
-    if (!next) return
-    // Nome único: não deixa duas pessoas usarem o mesmo nome.
-    const check = await apiClient.post<{ available: boolean }>('/api/rtc', {
-      action: 'check-name',
-      name: next,
-      exceptClientId: clientIdRef.current,
-    })
-    if (check.success && !check.data.available) {
-      toast.error('Este nome já está em uso. Escolha outro.')
-      return
-    }
-    const saved: Profile = {
-      name: next,
-      photo: profileRef.current.photo,
-      bio: profileRef.current.bio,
-      cover: profileRef.current.cover,
-    }
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(saved))
-    persistProfileToServer(saved)
-    nameRef.current = next
-    profileRef.current = saved
-    setName(next)
-    setProfile(saved)
-    toast.success(`Nome alterado para ${next}`)
-    registerPresence()
-    if (inCallRef.current && channelRef.current) {
-      void apiClient.post('/api/rtc', {
-        action: 'join',
-        clientId: clientIdRef.current,
-        name: next,
-        photo: saved.photo,
-        bio: saved.bio,
-        cover: saved.cover,
-        channel: channelRef.current,
-      })
-    }
-  }, [persistProfileToServer, registerPresence])
-
   // ----- gerenciar usuários offline (fantasmas) -----
   const removeAllOffline = useCallback(async () => {
     if (!isAdmin) {
@@ -2177,6 +2198,16 @@ export function ShareRoom() {
               }`}
             >
               {screenMuted[tile.id] ? '🔇' : '🔊'}
+            </button>
+          )}
+          {/* Virar câmera — aparece em tela cheia abaixo dos controles para a câmera local */}
+          {fullscreenTileId === tile.id && tile.isLocal && !tile.isScreen && camOn && (
+            <button
+              title={t('cameraFlip')}
+              onClick={flipCamera}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/50 text-sm transition hover:bg-black/70"
+            >
+              🔄
             </button>
           )}
           <button
@@ -3323,7 +3354,7 @@ export function ShareRoom() {
 
       {/* Painel de Configurações no mobile (perfil + avançadas) */}
       {(mobileTab === 'config' || configOpen) && (
-        <div className="share-panel share-panel-flat fixed inset-0 z-40 flex flex-col overflow-hidden lg:inset-y-6 lg:left-1/2 lg:h-[88vh] lg:w-full lg:max-w-5xl lg:-translate-x-1/2 lg:flex-row lg:rounded-2xl lg:p-0">
+        <div className="share-panel share-panel-flat settings-drawer fixed inset-0 z-40 flex flex-col overflow-hidden lg:inset-y-6 lg:left-1/2 lg:h-[88vh] lg:w-full lg:max-w-5xl lg:-translate-x-1/2 lg:flex-row lg:rounded-2xl lg:p-0">
           <div className="flex items-center justify-between gap-2 p-4 lg:hidden">
             <div className="flex items-center gap-2">
               {configPane !== 'menu' && (
@@ -3373,7 +3404,9 @@ export function ShareRoom() {
                 ['sobre', 'ℹ️', 'bg-cyan-500/15', t('about'), t('sobreDesc')],
                 ['avancado', '🛠️', 'bg-emerald-500/15', t('advanced'), t('avancadoDesc')],
               ] as const
-            ).map(([id, icon, bg, label, desc]) => (
+            )
+              .filter(([id]) => isAdmin || id !== 'limpeza')
+              .map(([id, icon, bg, label, desc]) => (
               <button
                 key={id}
                 onClick={() => setConfigPane(id)}
@@ -3386,7 +3419,7 @@ export function ShareRoom() {
                 </span>
                 <span>
                   <span className="block text-sm font-semibold">{label}</span>
-                  <span className="block text-xs text-slate-400">{desc}</span>
+                  <span className="block text-xs text-slate-200">{desc}</span>
                 </span>
                 {id === 'amigos' && pendingCount > 0 && (
                   <span className="absolute right-3 top-3 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white shadow-lg shadow-rose-500/40">
@@ -3417,7 +3450,9 @@ export function ShareRoom() {
                 ['sobre', 'ℹ️', t('about')],
                 ['avancado', '🛠️', t('advanced')],
               ] as const
-            ).map(([id, icon, label]) => (
+            )
+              .filter(([id]) => isAdmin || id !== 'limpeza')
+              .map(([id, icon, label]) => (
               <button
                 key={id}
                 onClick={() => setConfigPane(id)}
@@ -3496,12 +3531,6 @@ export function ShareRoom() {
                     className="w-full rounded-xl bg-indigo-500/20 px-4 py-3 text-left text-sm font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/30"
                   >
                     ✏️ {t('editProfile')}
-                  </button>
-                  <button
-                    onClick={() => resetMyName()}
-                    className="w-full rounded-xl bg-emerald-500/20 px-4 py-3 text-left text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
-                  >
-                    ✏️ {t('changeName')}
                   </button>
                 </section>
               )}
@@ -3760,7 +3789,7 @@ export function ShareRoom() {
                   />
                 </div>
 
-                <p className="mt-2 text-[11px] leading-snug text-slate-500">{t('noiseEchoHint')}</p>
+                <p className="mt-2 text-[11px] leading-snug text-slate-300">{t('noiseEchoHint')}</p>
                 {(
                   [
                     ['noiseSuppression', t('noiseLabel')],
@@ -3788,6 +3817,19 @@ export function ShareRoom() {
                     </span>
                   </button>
                 ))}
+              </section>
+              )}
+
+              {/* Câmera */}
+              {configPane === 'audio' && (
+              <section className="share-panel-soft mt-3 rounded-xl p-3">
+                <h4 className="mb-2 text-sm font-bold">📷 {t('cameraLabel')}</h4>
+                <SwitchRow
+                  checked={settings.cameraEnhance}
+                  onChecked={(v) => setSetting('cameraEnhance', v)}
+                  title={t('cameraEnhance')}
+                  desc={t('cameraEnhanceDesc')}
+                />
               </section>
               )}
 
@@ -3853,7 +3895,7 @@ export function ShareRoom() {
               )}
 
               {/* Limpeza */}
-              {configPane === 'limpeza' && (
+              {configPane === 'limpeza' && isAdmin && (
               <section className="share-panel-soft rounded-xl p-3">
                 <h4 className="mb-2 text-sm font-bold">🧹 {t('cleanup')}</h4>
                 <button
@@ -3991,12 +4033,6 @@ export function ShareRoom() {
                 )}
               </div>
 
-              <button
-                onClick={() => resetMyName()}
-                className="w-full rounded-xl bg-emerald-500/20 px-4 py-3 text-left text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
-              >
-                ✏️ {t('changeName')}
-              </button>
               {offlineMembers.length > 0 && (
                 <button
                   onClick={() => void removeAllOffline()}
