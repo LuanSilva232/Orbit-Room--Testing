@@ -368,6 +368,68 @@ function DeleteCountdown({ until }: { until: number }) {
   )
 }
 
+// Reprocessa o vídeo da câmera em um <canvas> para que a imagem enviada fique
+// sempre em pé, independente da rotação do celular. O próprio navegador renderiza
+// o vídeo da câmera já na orientação correta; a gente captura essa imagem pronta
+// e reenvia. Funciona em iOS (Safari/Chrome) e Android (Chrome), em qualquer
+// navegador com suporte a canvas.captureStream().
+function reorientCameraStream(
+  stream: MediaStream,
+  enabled: boolean
+): { stream: MediaStream; stop: () => void } {
+  const vtrack = stream.getVideoTracks()[0]
+  if (!enabled || !vtrack || typeof document === 'undefined') {
+    return { stream, stop: () => {} }
+  }
+  const video = document.createElement('video')
+  video.autoplay = true
+  video.muted = true
+  video.playsInline = true
+  video.setAttribute('playsinline', '')
+  video.srcObject = stream
+  void video.play().catch(() => {})
+
+  const canvas = document.createElement('canvas')
+  canvas.width = 640
+  canvas.height = 480
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    video.srcObject = null
+    return { stream, stop: () => {} }
+  }
+
+  const cvs = canvas.captureStream(30)
+  const outTrack = cvs.getVideoTracks()[0]
+  const final = new MediaStream([outTrack, ...stream.getAudioTracks()])
+
+  let raf = 0
+  let running = true
+  const draw = () => {
+    if (!running) return
+    raf = requestAnimationFrame(draw)
+    if (video.readyState < 2) return
+    const w = video.videoWidth
+    const h = video.videoHeight
+    if (!w || !h) return
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+    ctx.drawImage(video, 0, 0, w, h)
+  }
+  raf = requestAnimationFrame(draw)
+
+  return {
+    stream: final,
+    stop: () => {
+      running = false
+      cancelAnimationFrame(raf)
+      outTrack?.stop()
+      video.srcObject = null
+    },
+  }
+}
+
 export function ShareRoom() {
   const [clientId, setClientId] = useState('')
   const [name, setName] = useState('')
@@ -424,6 +486,11 @@ export function ShareRoom() {
   const [showClearChats, setShowClearChats] = useState(false)
   const [pendingClearChannel, setPendingClearChannel] = useState<ChannelId | null>(null)
   const [adminOn, setAdminOn] = useState(false)
+
+  // Detecção de aparelho: o botão de virar a câmera (frontal/traseira) só faz
+  // sentido em celular/tablet, então só aparece em aparelhos móveis.
+  const isMobileDevice =
+    typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
   // ----- conta (login com Google) -----
   const [authUser, setAuthUser] = useState<{ id: string; email: string } | null>(null)
@@ -747,6 +814,8 @@ export function ShareRoom() {
   const engineRef = useRef<RtcEngine | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
+  // Limpeza da correção de orientação da câmera (parar canvas/stream).
+  const orientStopRef = useRef<(() => void) | null>(null)
   const clientIdRef = useRef('')
   const nameRef = useRef('')
   const channelRef = useRef<ChannelId>('sala-1')
@@ -1076,7 +1145,12 @@ export function ShareRoom() {
         })
         // Se o microfone estava mudo, mantém mudo ao ativar câmera/tela.
         stream.getAudioTracks().forEach((t) => (t.enabled = !keepMicMuted))
-        const outgoing = applyMicGain(stream)
+        // Corrige a orientação do vídeo no celular para o outro lado sempre ver
+        // em pé, mesmo ao deitar/girar o aparelho. No desktop não muda nada.
+        orientStopRef.current?.()
+        const oriented = reorientCameraStream(stream, isMobileDevice)
+        orientStopRef.current = oriented.stop
+        const outgoing = applyMicGain(oriented.stream)
         replaceLocalStream(outgoing)
         setMicOn(!keepMicMuted)
         applyQualityToStreams(settings.defaultQuality)
@@ -1084,7 +1158,7 @@ export function ShareRoom() {
         toast.error('Não foi possível acessar microfone/câmera')
       }
     },
-    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.cameraFacing, settings.defaultQuality, applyMicGain, applyQualityToStreams]
+    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.cameraFacing, settings.defaultQuality, applyMicGain, applyQualityToStreams, isMobileDevice]
   )
 
   // Quando o usuário liga/desliga o corte de ruído, o eco ou a sensibilidade,
@@ -1509,6 +1583,8 @@ export function ShareRoom() {
       remotePeersRef.current = {}
       screenTrackIdsRef.current = {}
       setRemotePeers({})
+      orientStopRef.current?.()
+      orientStopRef.current = null
       replaceLocalStream(null)
       setCamOn(false)
       setMicOn(false)
@@ -1631,6 +1707,8 @@ export function ShareRoom() {
     engineRef.current?.closeAll()
     remotePeersRef.current = {}
     setRemotePeers({})
+    orientStopRef.current?.()
+    orientStopRef.current = null
     replaceLocalStream(null)
     setCamOn(false)
     setMicOn(false)
@@ -2229,7 +2307,7 @@ export function ShareRoom() {
             </button>
           )}
           {/* Virar câmera — sempre visível na câmera local, à esquerda do esticar */}
-          {tile.isLocal && !tile.isScreen && camOn && (
+          {tile.isLocal && !tile.isScreen && camOn && isMobileDevice && (
             <button
               title={t('cameraFlip')}
               onClick={flipCamera}
@@ -2384,7 +2462,7 @@ export function ShareRoom() {
             </button>
           )}
           {/* Virar câmera — aparece só para o dono da câmera (frontal/traseira) */}
-          {tile.isLocal && !tile.isScreen && camOn && (
+          {tile.isLocal && !tile.isScreen && camOn && isMobileDevice && (
             <button
               title={t('cameraFlip')}
               onClick={flipCamera}
@@ -4519,7 +4597,7 @@ export function ShareRoom() {
                   onResize={(e) => handleExpandedSize(e.currentTarget)}
                 />
                 <div className="absolute right-2 top-2 flex gap-1.5">
-                  {isLocal && !isScreen && camOn && (
+                  {isLocal && !isScreen && camOn && isMobileDevice && (
                     <button
                       onClick={flipCamera}
                       title={t('cameraFlip')}
