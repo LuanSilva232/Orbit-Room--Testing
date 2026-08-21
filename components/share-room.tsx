@@ -2326,9 +2326,13 @@ export function ShareRoom() {
                           <span className="flex-1 truncate font-semibold">{c.label}</span>
                           <span
                             title={`${count}/10 online`}
-                            className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-emerald-300 ring-1 ring-emerald-400/30"
+                            className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums ring-1 ${
+                              count >= 10
+                                ? 'bg-rose-500/15 text-rose-300 ring-rose-400/30'
+                                : 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30'
+                            }`}
                           >
-                            OK
+                            {count}/10
                           </span>
                         </button>
                       )
@@ -2378,9 +2382,13 @@ export function ShareRoom() {
                               </span>
                               <span
                                 title={`${count}/${cap} online`}
-                                className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-emerald-300 ring-1 ring-emerald-400/30"
+                                className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums ring-1 ${
+                                  count >= cap
+                                    ? 'bg-rose-500/15 text-rose-300 ring-rose-400/30'
+                                    : 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30'
+                                }`}
                               >
-                                OK
+                                {count}/{cap}
                               </span>
                             </span>
                           </button>
