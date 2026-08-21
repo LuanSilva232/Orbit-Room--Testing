@@ -95,11 +95,30 @@ type Tile = {
   simulated?: boolean
 }
 
+// Resoluções de captura por qualidade. Usamos valores `ideal` (com teto `max`)
+// para o navegador escolher a melhor resolução que o aparelho suportar sem
+// forçar muito — assim melhora o HD em celulares fracos sem causar travamento.
 const QUALITY_CONSTRAINTS: Record<Quality, MediaTrackConstraints> = {
-  auto: {},
-  baixa: { frameRate: { max: 15, ideal: 15 }, width: { max: 640, ideal: 640 } },
-  media: { frameRate: { max: 24, ideal: 24 }, width: { max: 960, ideal: 960 } },
-  alta: { frameRate: { max: 30, ideal: 30 }, width: { max: 1280, ideal: 1280 } },
+  auto: {
+    frameRate: { ideal: 30, max: 30 },
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
+  },
+  baixa: {
+    frameRate: { ideal: 15, max: 15 },
+    width: { ideal: 640, max: 640 },
+    height: { ideal: 360, max: 360 },
+  },
+  media: {
+    frameRate: { ideal: 24, max: 24 },
+    width: { ideal: 960, max: 960 },
+    height: { ideal: 540, max: 540 },
+  },
+  alta: {
+    frameRate: { ideal: 30, max: 30 },
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
+  },
 }
 
 // Limite de taxa de bits (bps) de envio por qualidade. Evita que o upload de
@@ -885,13 +904,17 @@ export function ShareRoom() {
     async (withVideo: boolean, keepMicMuted = false) => {
       if (!inCallRef.current) return
       try {
+        const videoConstraints =
+          settings.defaultQuality === 'auto'
+            ? QUALITY_CONSTRAINTS.auto
+            : QUALITY_CONSTRAINTS[settings.defaultQuality]
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: settings.echoCancellation,
             noiseSuppression: settings.noiseSuppression,
             autoGainControl: true,
           },
-          video: withVideo,
+          video: withVideo ? videoConstraints : false,
         })
         // Se o microfone estava mudo, mantém mudo ao ativar câmera/tela.
         stream.getAudioTracks().forEach((t) => (t.enabled = !keepMicMuted))
@@ -1950,6 +1973,9 @@ export function ShareRoom() {
           autoPlay
           playsInline
           muted={tile.isLocal || tile.muted || !!screenMuted[tile.id]}
+          // Realce leve (GPU, sem custo de CPU/banda): deixa a imagem mais
+          // nítida e viva, simulando uma câmera mais limpa/HD.
+          style={{ filter: 'contrast(1.06) saturate(1.12) brightness(1.02)' }}
           className="h-full w-full object-cover"
           ref={(el) => bind(el, tile.stream)}
         />
