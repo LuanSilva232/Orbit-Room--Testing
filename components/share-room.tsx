@@ -3507,6 +3507,11 @@ export function ShareRoom() {
                         }
                         roomInvites={roomInvites}
                         onJoinRoom={(roomId) => {
+                          // Ao entrar na sala, fecha o painel de Configurações/Convites
+                          // para não ficar sobreposto à tela de chamadas.
+                          setConfigOpen(false)
+                          setConfigPane('menu')
+                          setMobileTab('chamadas')
                           void joinChannel(roomId).then(() => void loadRooms())
                         }}
                         onDeclineRoomInvite={(roomId) =>
