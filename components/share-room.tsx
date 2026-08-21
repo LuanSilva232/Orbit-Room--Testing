@@ -330,6 +330,9 @@ const STRINGS = {
   password: ['Senha', 'Password'],
   noiseLabel: ['Ruído', 'Noise'],
   echoLabel: ['Eco', 'Echo'],
+  noiseEchoHint: ['Desligados por padrão para a voz sair natural e clara.', 'Off by default so your voice stays natural and clear.'],
+  micSensitivity: ['Sensibilidade do microfone', 'Microphone sensitivity'],
+  micSensitivityDesc: ['Ajusta o quanto o microfone capta. Desligado = som natural.', 'Adjusts how much the mic picks up. Off = natural sound.'],
   aboutText: [
     'O Orbit Room é uma plataforma de conversas ao vivo em voz e vídeo, criada para aproximar pessoas e reunir todo mundo em salas compartilhadas em tempo real — não importa a distância.\n\n#Por que o Orbit Room existe?\n\nEstamos sempre conectados, mas muitas vezes distantes. O Orbit Room nasceu para devolver ao mundo digital o calor de uma conversa cara a cara: um lugar simples em que basta entrar numa sala para se sentir junto de verdade.\n\n• Reunir pessoas ao redor de uma conversa viva, sem fricção\n• Trazer de volta a sensação de “estar na mesma sala”, de qualquer lugar\n• Tornar as conversas reais acessíveis e naturais para todos\n\nMais do que um aplicativo de chamadas, é um espaço de presença e conexão — feito para quem quer conversar, e não apenas conectar.',
     'Orbit Room is a live voice and video conversation platform, created to bring people together and gather everyone in shared rooms in real time — no matter the distance.\n\n#Why does Orbit Room exist?\n\nWe are always connected, yet often distant. Orbit Room was born to bring the warmth of a face-to-face conversation back to the digital world: a simple place where you just join a room to truly feel together.\n\n• Bring people together around a living conversation, without friction\n• Bring back the feeling of “being in the same room”, from anywhere\n• Make real conversations accessible and natural for everyone\n\nMore than a calling app, it is a space for presence and connection — made for those who want to talk, not just connect.',
@@ -583,6 +586,8 @@ export function ShareRoom() {
     volume: number
     noiseSuppression: boolean
     echoCancellation: boolean
+    micSensitivity: boolean
+    micGain: number
     defaultQuality: Quality
     theme: 'dark' | 'light'
     notifications: boolean
@@ -592,8 +597,10 @@ export function ShareRoom() {
   const SETTINGS_KEY = 'share_room_settings'
   const DEFAULT_SETTINGS: Settings = {
     volume: 1,
-    noiseSuppression: true,
-    echoCancellation: true,
+    noiseSuppression: false,
+    echoCancellation: false,
+    micSensitivity: false,
+    micGain: 1,
     defaultQuality: 'auto',
     theme: 'dark',
     notifications: false,
@@ -742,6 +749,10 @@ export function ShareRoom() {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const recorderStreamRef = useRef<MediaStream | null>(null)
   const recordChunksRef = useRef<Blob[]>([])
+  // Cadeia de processamento de ganho do microfone (WebAudio) aplicada ao stream
+  // local antes de enviar. Guarda os nós para poder recalibrar em tempo real e
+  // desconectar ao trocar de stream.
+  const micGainRef = useRef<{ source: MediaStreamAudioSourceNode; gain: GainNode; dest: MediaStreamAudioDestinationNode } | null>(null)
 
   // ----- utils -----
   const sendSignalBody = useCallback(
@@ -929,6 +940,56 @@ export function ShareRoom() {
     [applyQualityToStreams]
   )
 
+  // Aplica o ganho de sensibilidade a um stream de microfone via WebAudio.
+  // Devolve o próprio stream quando a sensibilidade está desligada ou o ganho é
+  // 1x (som natural), para não adicionar latência/processamento desnecessário.
+  const applyMicGain = useCallback(
+    (stream: MediaStream): MediaStream => {
+      const audioTrack = stream.getAudioTracks()[0]
+      const doGain = settings.micSensitivity && Math.abs(settings.micGain - 1) > 0.001 && audioTrack
+      if (!doGain) {
+        if (micGainRef.current) {
+          try {
+            micGainRef.current.source.disconnect()
+            micGainRef.current.gain.disconnect()
+            micGainRef.current.dest.disconnect()
+          } catch {
+            /* noop */
+          }
+          micGainRef.current = null
+        }
+        return stream
+      }
+      const ctx = ensureAudioCtx()
+      if (!ctx) return stream
+      // Desconecta a cadeia anterior (caso troque o stream com sensibilidade ligada).
+      if (micGainRef.current) {
+        try {
+          micGainRef.current.source.disconnect()
+          micGainRef.current.gain.disconnect()
+          micGainRef.current.dest.disconnect()
+        } catch {
+          /* noop */
+        }
+      }
+      const source = ctx.createMediaStreamSource(stream)
+      const gain = ctx.createGain()
+      gain.gain.value = settings.micGain
+      const dest = ctx.createMediaStreamDestination()
+      source.connect(gain).connect(dest)
+      micGainRef.current = { source, gain, dest }
+      const processed = new MediaStream([
+        ...dest.stream.getAudioTracks(),
+        ...stream.getVideoTracks(),
+      ])
+      // Garante estado de habilitado do áudio coerente com o original.
+      const origEnabled = audioTrack.enabled
+      processed.getAudioTracks().forEach((t) => (t.enabled = origEnabled))
+      return processed
+    },
+    [ensureAudioCtx, settings.micSensitivity, settings.micGain]
+  )
+
   const reacquire = useCallback(
     async (withVideo: boolean, keepMicMuted = false) => {
       if (!inCallRef.current) return
@@ -937,33 +998,44 @@ export function ShareRoom() {
           settings.defaultQuality === 'auto'
             ? QUALITY_CONSTRAINTS.auto
             : QUALITY_CONSTRAINTS[settings.defaultQuality]
+        // Parâmetros de captura: eco/ruído só ativos quando o usuário escolher.
+        // autoGainControl fica ativo para dar volume natural sem abafar; quando a
+        // sensibilidade está ligada, o ganho é controlado pelo WebAudio abaixo.
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: settings.echoCancellation,
             noiseSuppression: settings.noiseSuppression,
-            autoGainControl: true,
+            autoGainControl: !settings.micSensitivity,
           },
           video: withVideo ? videoConstraints : false,
         })
         // Se o microfone estava mudo, mantém mudo ao ativar câmera/tela.
         stream.getAudioTracks().forEach((t) => (t.enabled = !keepMicMuted))
-        replaceLocalStream(stream)
+        const outgoing = applyMicGain(stream)
+        replaceLocalStream(outgoing)
         setMicOn(!keepMicMuted)
         applyQualityToStreams(settings.defaultQuality)
       } catch {
         toast.error('Não foi possível acessar microfone/câmera')
       }
     },
-    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.defaultQuality, applyQualityToStreams]
+    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.defaultQuality, applyMicGain, applyQualityToStreams]
   )
 
-  // Quando o usuário liga/desliga o corte de ruído ou o eco, reaplica na hora
-  // na chamada atual (sem precisar sair e entrar de novo).
+  // Quando o usuário liga/desliga o corte de ruído, o eco ou a sensibilidade,
+  // reaplica na hora na chamada atual (sem precisar sair e entrar de novo).
   useEffect(() => {
     if (!inCallRef.current) return
     void reacquire(camOn, !micOn)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.noiseSuppression, settings.echoCancellation])
+  }, [settings.noiseSuppression, settings.echoCancellation, settings.micSensitivity])
+
+  // O ganho (slider) é recalibrado em tempo real no nó já ativo, sem recapturar
+  // o microfone. Só precisa recapturar ao ligar/desligar a sensibilidade (acima).
+  useEffect(() => {
+    if (!micGainRef.current) return
+    micGainRef.current.gain.gain.value = settings.micGain
+  }, [settings.micGain, settings.micSensitivity])
 
   // ----- engine + polling -----
   useEffect(() => {
@@ -1032,21 +1104,25 @@ export function ShareRoom() {
       {
         onTrack: (peerId: string, stream: MediaStream) => {
           const prev = remotePeersRef.current[peerId]
-          // Guarda no máx. um stream com o mesmo id (evita duplicar na lista).
-          let streams = (prev ? prev.streams : []).filter((s) => s.id !== stream.id)
-          // Ao renegociar, o áudio/vídeo do remoto pode ser reentregue num novo
-          // objeto de stream. Para o perfil NÃO duplicar, substitui os streams
-          // "normais" do participante e mantém apenas o compartilhamento de tela
-          // (identificado pelos ids de track informados pelo próprio remoto).
           const screenIds = screenTrackIdsRef.current[peerId] ?? []
           const videoId = stream.getVideoTracks()[0]?.id ?? ''
-          if (!(videoId && screenIds.includes(videoId))) {
-            streams = streams.filter((s) => {
+          const isScreen = videoId !== '' && screenIds.includes(videoId)
+          // Guarda no máx. um stream com o mesmo id (evita duplicar na lista).
+          let streams = (prev ? prev.streams : []).filter((s) => s.id !== stream.id)
+          if (isScreen) {
+            // Tela compartilhada: adiciona SEM apagar a câmera (o usuário pode
+            // manter câmera + tela ligadas ao mesmo tempo).
+            streams.push(stream)
+          } else {
+            // Stream normal (câmera/mic): substitui o stream "normal" anterior
+            // (evita duplicar o perfil ao renegociar), mas preserva quaisquer
+            // telas que já estejam ativas.
+            const keptScreens = streams.filter((s) => {
               const vid = s.getVideoTracks()[0]?.id ?? ''
               return screenIds.includes(vid)
             })
+            streams = [...keptScreens, stream]
           }
-          streams.push(stream)
           remotePeersRef.current = {
             ...remotePeersRef.current,
             [peerId]: { name: prev?.name ?? 'Usuário', photo: prev?.photo, streams },
@@ -3657,6 +3733,34 @@ export function ShareRoom() {
                   className="w-full accent-indigo-400"
                   aria-label={t('volume')}
                 />
+
+                {/* Sensibilidade do microfone (acessibilidade) */}
+                <div className="mt-2 border-t border-white/5 pt-2">
+                  <SwitchRow
+                    checked={settings.micSensitivity}
+                    onChecked={(v) => setSetting('micSensitivity', v)}
+                    title={t('micSensitivity')}
+                    desc={t('micSensitivityDesc')}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-400">{t('micVolume')}</span>
+                    <span className="text-xs tabular-nums text-slate-300">
+                      {Math.round(settings.micGain * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={50}
+                    max={200}
+                    value={Math.round(settings.micGain * 100)}
+                    onChange={(e) => setSetting('micGain', Number(e.target.value) / 100)}
+                    className="w-full accent-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={!settings.micSensitivity}
+                    aria-label={t('micVolume')}
+                  />
+                </div>
+
+                <p className="mt-2 text-[11px] leading-snug text-slate-500">{t('noiseEchoHint')}</p>
                 {(
                   [
                     ['noiseSuppression', t('noiseLabel')],
