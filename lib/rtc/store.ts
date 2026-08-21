@@ -574,6 +574,10 @@ export async function joinChannel(
     }
   }
 
+  // Limpa avisos de remoção antigos (ex.: sobraram de um recarregamento),
+  // para que o usuário não veja "Você foi removido da sala" ao entrar de novo.
+  await getSql()`DELETE FROM rtc_mailbox WHERE to_client = ${clientId} AND payload->>'type' = 'kicked'`
+
   if (previous && previous.channel === channel) {
     // Reentrada no MESMO canal. Se o usuário tinha saído (left_at preenchido),
     // é uma nova entrada de fato: avisa os demais como peer-joined para que
@@ -582,7 +586,7 @@ export async function joinChannel(
     await getSql()`
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null}, cover = ${cover ?? null},
-          user_id = ${userId}, last_seen = ${now}, left_at = NULL,
+          user_id = ${userId}, last_seen = ${now}, left_at = NULL, single_since = NULL,
           last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
@@ -622,7 +626,7 @@ export async function joinChannel(
       UPDATE rtc_clients
       SET channel = ${channel}, name = ${name}, photo = ${photo ?? null},
           bio = ${bio ?? null}, cover = ${cover ?? null}, user_id = ${userId},
-          last_seen = ${now}, left_at = NULL,
+          last_seen = ${now}, left_at = NULL, single_since = NULL,
           last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
@@ -667,7 +671,7 @@ export async function leaveChannel(clientId: string): Promise<void> {
   // Não marca como offline — quem fechar a página fica offline sozinho (last_seen).
   await getSql()`
     UPDATE rtc_clients
-    SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}
+    SET channel = 'lobby', left_at = NULL, last_seen = ${nowMs()}, single_since = NULL
     WHERE client_id = ${clientId}
   `
   // Se sobrar só 1 pessoa no canal, inicia a contagem para sair do canal (AFK).
