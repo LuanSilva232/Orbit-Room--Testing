@@ -1805,13 +1805,18 @@ export function ShareRoom() {
     }
     for (const [peerId, peer] of Object.entries(remotePeers)) {
       const screenIds = screenTrackIdsRef.current[peerId] ?? []
+      // Nome/foto reais do participante (a lista onlineMembers está sempre atualizada),
+      // evitando o nome provisório "Usuário" quando o vídeo chega antes do nome.
+      const member = onlineMembers.find((m) => m.clientId === peerId)
+      const peerName = member?.name || peer.name || 'Usuário'
+      const peerPhoto = member?.photo || peer.photo
       peer.streams.forEach((stream) => {
         const hasVideo = stream.getVideoTracks().length > 0
         const videoId = stream.getVideoTracks()[0]?.id ?? ''
         tiles.push({
           id: `remote-${peerId}-${stream.id}`,
-          name: peer.name,
-          photo: peer.photo,
+          name: peerName,
+          photo: peerPhoto,
           stream,
           hasVideo,
           isLocal: false,
@@ -1839,7 +1844,7 @@ export function ShareRoom() {
     }
   }
     return tiles
-  }, [inCall, camOn, name, profile, screenStreaming, remotePeers, mutedPeers, isAdmin, demoScreens, localMediaStream])
+  }, [inCall, camOn, name, profile, screenStreaming, remotePeers, mutedPeers, isAdmin, demoScreens, localMediaStream, onlineMembers])
 
   // Ordena as telas compartilhadas por ordem de ativação (quem começou primeiro).
   const allScreenTiles = tiles.filter((t) => t.isScreen)
@@ -1850,8 +1855,44 @@ export function ShareRoom() {
   const screenTiles = [...allScreenTiles].sort(
     (a, b) => screenOrderRef.current.indexOf(a.id) - screenOrderRef.current.indexOf(b.id)
   )
-  // Aba "Perfis": somente participantes sem câmera/tela (avatares).
-  const profileTiles = tiles.filter((t) => !t.isScreen && !t.hasVideo)
+  // Aba "Perfis": UM card por participante (perfis), sempre visíveis,
+  // mesmo que a pessoa tenha a câmera ou a tela ligada (ela aparece também
+  // nas abas Câmeras/Telas, sem sair daqui).
+  const profileTiles = useMemo<Tile[]>(() => {
+    if (!inCall) return []
+    const list: Tile[] = []
+    list.push({
+      id: 'local-profile',
+      name: `${name} (Você)`,
+      photo: profile.photo,
+      stream: localMediaStream,
+      hasVideo: false,
+      isLocal: true,
+      peerId: null,
+      muted: false,
+    })
+    for (const [pid, peer] of Object.entries(remotePeers)) {
+      const member = onlineMembers.find((m) => m.clientId === pid)
+      const pname = member?.name || peer.name || 'Usuário'
+      const pphoto = member?.photo || peer.photo
+      const screenIds = screenTrackIdsRef.current[pid] ?? []
+      const audioStream = peer.streams.find((s) => {
+        const vid = s.getVideoTracks()[0]?.id ?? ''
+        return !screenIds.includes(vid)
+      })
+      list.push({
+        id: `profile-${pid}`,
+        name: pname,
+        photo: pphoto,
+        stream: audioStream ?? null,
+        hasVideo: false,
+        isLocal: false,
+        peerId: pid,
+        muted: mutedPeers[pid] ?? false,
+      })
+    }
+    return list
+  }, [inCall, name, profile, remotePeers, onlineMembers, mutedPeers, localMediaStream])
   const extraScreens = screenTiles.slice(2)
   // Câmeras ativas (inclui a minha) e se há telas/câmeras para exibir nas abas.
   const cameraTiles = tiles.filter((t) => !t.isScreen && t.hasVideo)
@@ -1892,7 +1933,7 @@ export function ShareRoom() {
           ? 'aspect-video w-[420px] max-w-full sm:w-[520px] lg:w-[720px]'
           : tile.hasVideo
             ? 'aspect-video w-[300px] max-w-[80%] sm:w-[340px] lg:w-[400px]'
-            : 'aspect-square w-24 sm:w-28'
+            : 'w-24 sm:w-28'
       }`}
     >
       {tile.hasVideo ? (
@@ -1936,11 +1977,9 @@ export function ShareRoom() {
             <span className="max-w-full truncate px-1 text-[11px] font-medium text-slate-100">
               {tile.name}
             </span>
-            {!(tile.isLocal ? !micOn : tile.muted) && (
-              <span className="flex items-center gap-1 text-[10px] text-emerald-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ao vivo
-              </span>
-            )}
+            <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ao vivo
+            </span>
           </div>
         </>
       )}
@@ -2075,6 +2114,9 @@ export function ShareRoom() {
     return (
       <div
         key={tile.id}
+        ref={(el) => {
+          tileElsRef.current[tile.id] = el
+        }}
         className={`relative flex-none overflow-hidden rounded-xl border border-white/10 bg-black/70 ${
           square
             ? 'aspect-square w-[150px] sm:w-[170px]'
@@ -2086,26 +2128,36 @@ export function ShareRoom() {
             autoPlay
             playsInline
             muted={tile.isLocal || tile.muted}
-            className="h-full w-full object-cover"
+            className={`h-full w-full ${tile.isScreen ? 'object-contain' : 'object-cover'}`}
             ref={(el) => bind(el, tile.stream)}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-3xl">🖥️</div>
         )}
         {/* Perfil (foto + nome) no canto inferior esquerdo */}
-        <div className="absolute bottom-2 left-2 flex max-w-[85%] items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1">
+        <div className="absolute bottom-2 left-2 flex max-w-[80%] items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1">
           <Avatar name={tile.name} photo={tile.photo} size={22} />
           <span className="truncate text-[11px] font-semibold text-slate-100">{tile.name}</span>
         </div>
-        {tile.isScreen && !tile.isLocal && (
+        {/* Controles: mudo (telas remotas) + expandir/tela cheia */}
+        <div className="absolute right-2 top-2 flex gap-1.5">
+          {tile.isScreen && !tile.isLocal && (
+            <button
+              title={screenMuted[tile.id] ? t('screenUnmute') : t('screenMute')}
+              onClick={() => setScreenMuted((prev) => ({ ...prev, [tile.id]: !(prev[tile.id] ?? false) }))}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/50 text-sm text-white transition hover:bg-black/70"
+            >
+              {screenMuted[tile.id] ? '🔇' : '🔊'}
+            </button>
+          )}
           <button
-            title={screenMuted[tile.id] ? t('screenUnmute') : t('screenMute')}
-            onClick={() => setScreenMuted((prev) => ({ ...prev, [tile.id]: !(prev[tile.id] ?? false) }))}
-            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg bg-black/50 text-xs text-white transition hover:bg-black/70"
+            title="Expandir (tela cheia)"
+            onClick={() => toggleTileFullscreen(tile.id)}
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/50 text-sm text-white transition hover:bg-black/70"
           >
-            {screenMuted[tile.id] ? '🔇' : '🔊'}
+            ⛶
           </button>
-        )}
+        </div>
       </div>
     )
   }
@@ -2133,12 +2185,6 @@ export function ShareRoom() {
           <>
             <div className="flex items-center justify-between gap-2 rounded-lg bg-sky-500/10 px-3 py-2 text-xs text-sky-200 ring-1 ring-sky-400/20">
               <span className="font-semibold">📷 {t('camerasTabTitle')} ({cameraTiles.length})</span>
-              <button
-                onClick={() => setCallView('profiles')}
-                className="rounded-md bg-white/10 px-2.5 py-1 font-semibold hover:bg-white/20"
-              >
-                👥 {t('backToProfiles')}
-              </button>
             </div>
             <div className="flex flex-wrap content-start items-start justify-start gap-3">
               {cameraTiles.map((tile) => renderMediaTile(tile, true))}
@@ -2150,12 +2196,6 @@ export function ShareRoom() {
           <>
             <div className="flex items-center justify-between gap-2 rounded-lg bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-200 ring-1 ring-fuchsia-400/20">
               <span className="font-semibold">🖥️ {t('screensTabTitle')} ({screenTiles.length})</span>
-              <button
-                onClick={() => setCallView('profiles')}
-                className="rounded-md bg-white/10 px-2.5 py-1 font-semibold hover:bg-white/20"
-              >
-                👥 {t('backToProfiles')}
-              </button>
             </div>
             <div className="flex flex-wrap content-start items-start justify-start gap-3">
               {screenTiles.map((tile) => renderMediaTile(tile, false))}
@@ -2665,8 +2705,50 @@ export function ShareRoom() {
         {inCall && (
           <>
             <div className="mt-3 flex flex-col items-center gap-2">
-              {/* Fileira principal: ações essenciais em círculos */}
-              <div className="flex items-center justify-center gap-3">
+              {/* Fileira principal: ações essenciais em círculos.
+                  As abas "Ver câmeras"/"Ver telas" ficam numa fileira ACIMA,
+                  cada uma alinhada sobre o seu ícone (câmera ou tela). */}
+              <div className="flex flex-col items-center gap-1">
+                {/* Fileira de abas (acima dos ícones) */}
+                <div className="flex items-end justify-center gap-x-4">
+                  <span className="w-20 flex-none" />
+                  <div className="flex h-7 w-20 flex-none items-center justify-center">
+                    {hasCameras ? (
+                      <button
+                        onClick={() => setCallView(callView === 'cameras' ? 'profiles' : 'cameras')}
+                        title={t('camerasTabTitle')}
+                        className={`flex h-7 max-w-full items-center justify-center rounded-full px-2.5 text-[10px] font-semibold leading-tight transition ${
+                          callView === 'cameras'
+                            ? 'bg-sky-500/25 text-sky-100 ring-1 ring-sky-400/50'
+                            : 'bg-white/10 text-white hover:bg-white/15'
+                        }`}
+                      >
+                        {callView === 'cameras' ? t('backToProfiles') : t('seeCamerasBtn')}
+                      </button>
+                    ) : (
+                      <span className="h-7 flex-none" />
+                    )}
+                  </div>
+                  <div className="flex h-7 w-20 flex-none items-center justify-center">
+                    {hasScreens ? (
+                      <button
+                        onClick={() => setCallView(callView === 'screens' ? 'profiles' : 'screens')}
+                        title={t('screensTabTitle')}
+                        className={`flex h-7 max-w-full items-center justify-center rounded-full px-2.5 text-[10px] font-semibold leading-tight transition ${
+                          callView === 'screens'
+                            ? 'bg-fuchsia-500/25 text-fuchsia-100 ring-1 ring-fuchsia-400/50'
+                            : 'bg-white/10 text-white hover:bg-white/15'
+                        }`}
+                      >
+                        {callView === 'screens' ? t('backToProfiles') : t('seeScreensBtn')}
+                      </button>
+                    ) : (
+                      <span className="h-7 flex-none" />
+                    )}
+                  </div>
+                </div>
+                {/* Fileira de ícones (embaixo) */}
+                <div className="flex items-center justify-center gap-x-4">
                 <button
                   onClick={toggleMic}
                   className="flex w-20 flex-none flex-col items-center gap-1.5"
@@ -2701,25 +2783,6 @@ export function ShareRoom() {
                   <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{camOn ? t('camOn') : t('camTurn')}</span>
                 </button>
 
-                {hasCameras && (
-                  <button
-                    onClick={() => setCallView(callView === 'cameras' ? 'profiles' : 'cameras')}
-                    title={t('camerasTabTitle')}
-                    className="flex w-20 flex-none flex-col items-center gap-1.5"
-                  >
-                    <span
-                      className={`flex h-12 w-12 items-center justify-center rounded-full text-lg transition ${
-                        callView === 'cameras'
-                          ? 'bg-sky-500/25 text-sky-100 ring-1 ring-sky-400/50'
-                          : 'bg-white/10 text-white hover:bg-white/15'
-                      }`}
-                    >
-                      🎥
-                    </span>
-                    <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{t('seeCamerasBtn')}</span>
-                  </button>
-                )}
-
                 <button
                   onClick={() => void toggleScreen()}
                   className="flex w-20 flex-none flex-col items-center gap-1.5"
@@ -2736,25 +2799,7 @@ export function ShareRoom() {
                   </span>
                   <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{screenStreaming ? t('screenStop') : t('screenShare')}</span>
                 </button>
-
-                {hasScreens && (
-                  <button
-                    onClick={() => setCallView(callView === 'screens' ? 'profiles' : 'screens')}
-                    title={t('screensTabTitle')}
-                    className="flex w-20 flex-none flex-col items-center gap-1.5"
-                  >
-                    <span
-                      className={`flex h-12 w-12 items-center justify-center rounded-full text-lg transition ${
-                        callView === 'screens'
-                          ? 'bg-fuchsia-500/25 text-fuchsia-100 ring-1 ring-fuchsia-400/50'
-                          : 'bg-white/10 text-white hover:bg-white/15'
-                      }`}
-                    >
-                      🎬
-                    </span>
-                    <span className="w-full text-center text-[10px] font-medium leading-tight text-slate-400">{t('seeScreensBtn')}</span>
-                  </button>
-                )}
+                </div>
               </div>
 
               {/* Fileira secundária: áudio na tela + qualidade */}
@@ -3838,6 +3883,7 @@ export function ShareRoom() {
         <div className="fixed inset-0 z-[110] flex flex-col bg-black">
           <div className="flex items-center justify-between gap-2 bg-black/80 px-4 py-2">
             <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-white">
+              <Avatar name={watchScreen.name} photo={watchScreen.photo} size={22} />
               <span className="h-2 w-2 flex-none rounded-full bg-emerald-400" />
               <span className="truncate">{watchScreen.name}</span>
             </div>
