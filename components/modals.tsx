@@ -419,10 +419,7 @@ export function ProfileEditModal({
           Salvar
         </button>
       </div>
-<<<<<<< HEAD
-=======
       </div>
->>>>>>> d0320ef3b0c676a3463f056ea6f2826f7012afd1
       </>
       ) : (
       <div className="relative py-6 text-center">
@@ -450,4 +447,3 @@ export function ProfileEditModal({
     </Modal>
   )
 }
-

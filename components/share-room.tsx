@@ -2044,44 +2044,7 @@ export function ShareRoom() {
       }
     )
     if (!res.success) toast.error(res.error)
-<<<<<<< HEAD
-  }, [persistProfileToServer])
-
-  const resetMyName = useCallback(() => {
-    if (!authUserRef.current) {
-      toast.error('Faça login com o Google para trocar seu nome.')
-      return
-    }
-    const next = (window.prompt('Qual nome você quer usar?') || '').trim()
-    if (!next) return
-    const saved: Profile = {
-      name: next,
-      photo: profileRef.current.photo,
-      bio: profileRef.current.bio,
-      cover: profileRef.current.cover,
-    }
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(saved))
-    persistProfileToServer(saved)
-    nameRef.current = next
-    profileRef.current = saved
-    setName(next)
-    setProfile(saved)
-    toast.success(`Nome alterado para ${next}`)
-    if (inCallRef.current && channelRef.current) {
-      void apiClient.post('/api/rtc', {
-        action: 'join',
-        clientId: clientIdRef.current,
-        name: next,
-        photo: saved.photo,
-        bio: saved.bio,
-        cover: saved.cover,
-        channel: channelRef.current,
-      })
-    }
-  }, [persistProfileToServer])
-=======
   }, [persistProfileToServer, registerPresence])
->>>>>>> d0320ef3b0c676a3463f056ea6f2826f7012afd1
 
   // ----- gerenciar usuários offline (fantasmas) -----
   const removeAllOffline = useCallback(async () => {
@@ -4700,5 +4663,4 @@ export function ShareRoom() {
     </div>
   )
 }
-
 
