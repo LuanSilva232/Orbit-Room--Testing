@@ -426,6 +426,15 @@ function reorientCameraStream(
       cancelAnimationFrame(raf)
       outTrack?.stop()
       video.srcObject = null
+      // Libera a fonte original (a câmera) para não acumular capturas abertas a
+      // cada religada — acumular câmeras faz o vídeo piscar/sumir no outro lado.
+      stream.getTracks().forEach((t) => {
+        try {
+          t.stop()
+        } catch {
+          /* noop */
+        }
+      })
     },
   }
 }
