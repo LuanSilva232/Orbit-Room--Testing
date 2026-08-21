@@ -80,7 +80,7 @@ async function idbSet(key: string, value: string): Promise<void> {
   }
 }
 
-type Remote = { name: string; streams: MediaStream[] }
+type Remote = { name: string; photo?: string; streams: MediaStream[] }
 
 type Tile = {
   id: string
@@ -955,7 +955,7 @@ export function ShareRoom() {
           streams.push(stream)
           remotePeersRef.current = {
             ...remotePeersRef.current,
-            [peerId]: { name: prev?.name ?? 'Usuário', streams },
+            [peerId]: { name: prev?.name ?? 'Usuário', photo: prev?.photo, streams },
           }
           setRemotePeers({ ...remotePeersRef.current })
         },
@@ -996,10 +996,14 @@ export function ShareRoom() {
         if (peerId !== clientIdRef.current && engine.hasPeer(peerId) === false) {
           engine.addPeer(peerId)
         }
-        if (remotePeersRef.current[peerId]) {
-          remotePeersRef.current[peerId].name = msg.member.name
-          setRemotePeers({ ...remotePeersRef.current })
+        const existing = remotePeersRef.current[peerId]
+        remotePeersRef.current = {
+          ...remotePeersRef.current,
+          [peerId]: existing
+            ? { ...existing, name: msg.member.name, photo: msg.member.photo }
+            : { name: msg.member.name, photo: msg.member.photo, streams: [] },
         }
+        setRemotePeers({ ...remotePeersRef.current })
         // Notificação (se ativada nas Configurações) quando alguém entra na sala.
         if (settings.notifications && peerId !== clientIdRef.current && document.hidden) {
           try {
@@ -1025,10 +1029,14 @@ export function ShareRoom() {
         }
       } else if (msg.type === 'peer-updated') {
         const peerId = msg.member.clientId
-        if (remotePeersRef.current[peerId]) {
-          remotePeersRef.current[peerId].name = msg.member.name
-          setRemotePeers({ ...remotePeersRef.current })
+        const existing = remotePeersRef.current[peerId]
+        remotePeersRef.current = {
+          ...remotePeersRef.current,
+          [peerId]: existing
+            ? { ...existing, name: msg.member.name, photo: msg.member.photo }
+            : { name: msg.member.name, photo: msg.member.photo, streams: [] },
         }
+        setRemotePeers({ ...remotePeersRef.current })
       } else if (msg.type === 'channel-state') {
         const peers = msg.members.filter((m) => m.clientId !== clientIdRef.current)
         peers.forEach((m) => engine.addPeer(m.clientId))
@@ -1760,6 +1768,7 @@ export function ShareRoom() {
         tiles.push({
           id: `remote-${peerId}-${stream.id}`,
           name: peer.name,
+          photo: peer.photo,
           stream,
           hasVideo,
           isLocal: false,
@@ -4048,3 +4057,4 @@ export function ShareRoom() {
     </div>
   )
 }
+
