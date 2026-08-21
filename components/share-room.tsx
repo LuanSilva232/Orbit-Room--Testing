@@ -130,15 +130,6 @@ const QUALITY_BITRATES: Record<Quality, number> = {
   alta: 2_500_000, // ~2.5 Mbps
 }
 
-// Ajustes de nitidez da câmera (extensões de alguns navegadores). Quem não
-// suporta ignora silenciosamente e mantém a imagem original.
-const CAMERA_ENHANCEMENT: MediaTrackConstraints = {
-  sharpness: 1,
-  contrast: 1.06,
-  saturation: 1.12,
-  brightness: 1.03,
-} as unknown as MediaTrackConstraints
-
 // Interruptor (switch) reutilizável das Configurações.
 function SwitchRow({
   checked,
@@ -915,23 +906,6 @@ export function ShareRoom() {
     })
   }, [])
 
-  // Tile atualmente em tela cheia (para mostrar controles extras, ex.: virar câmera).
-  const [fullscreenTileId, setFullscreenTileId] = useState<string | null>(null)
-  useEffect(() => {
-    const onFullscreenChange = () => {
-      let id: string | null = null
-      for (const [tid, el] of Object.entries(tileElsRef.current)) {
-        if (document.fullscreenElement === el) {
-          id = tid
-          break
-        }
-      }
-      setFullscreenTileId(id)
-    }
-    document.addEventListener('fullscreenchange', onFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
-  }, [])
-
   // Vira a câmera entre frontal/traseira, recapturando apenas o vídeo local.
   const flipCamera = useCallback(() => {
     if (!camOn) return
@@ -940,19 +914,44 @@ export function ShareRoom() {
     toast.info(next === 'environment' ? 'Câmera traseira' : 'Câmera frontal')
   }, [camOn, settings.cameraFacing, setSetting])
 
-  // Aplica as melhorias de nitidez na trilha de vídeo ativa (sem recapturar o mic).
+  // Aplica as melhorias de nitidez na trilha de vídeo ativa, mas só com os
+  // ajustes que a câmera realmente suporta. Aplicar um ajuste não suportado
+  // pode travar o feed em preto, então conferimos com getCapabilities() antes.
+  const applyCameraEnhance = useCallback(
+    (stream: MediaStream | null) => {
+      if (!settings.cameraEnhance) return
+      const vtrack = stream?.getVideoTracks()[0]
+      if (!vtrack) return
+      let caps: MediaTrackCapabilities = {}
+      try {
+        caps = typeof vtrack.getCapabilities === 'function' ? vtrack.getCapabilities() : {}
+      } catch {
+        caps = {}
+      }
+      const adv: Record<string, number> = {}
+      if ('sharpness' in caps) adv.sharpness = 1
+      if ('contrast' in caps) adv.contrast = 1.06
+      if ('saturation' in caps) adv.saturation = 1.12
+      if ('brightness' in caps) adv.brightness = 1.03
+      if (Object.keys(adv).length === 0) return
+      void vtrack
+        .applyConstraints({ advanced: [adv as unknown as MediaTrackConstraints] })
+        .catch(() => {
+          /* câmera não aceitou os ajustes — mantém a imagem original */
+        })
+    },
+    [settings.cameraEnhance]
+  )
+
+  // Ao ligar/desligar a nitidez, reaplica (ou limpa) os ajustes no feed atual.
   useEffect(() => {
-    const stream = localStreamRef.current
-    const vtrack = stream?.getVideoTracks()[0]
-    if (!vtrack) return
-    void vtrack
-      .applyConstraints({
-        advanced: settings.cameraEnhance ? [CAMERA_ENHANCEMENT] : [],
-      })
-      .catch(() => {
-        /* nem todos os navegadores aceitam esses ajustes */
-      })
-  }, [settings.cameraEnhance])
+    if (!settings.cameraEnhance) {
+      const vtrack = localStreamRef.current?.getVideoTracks()[0]
+      if (vtrack) void vtrack.applyConstraints({ advanced: [] }).catch(() => {})
+      return
+    }
+    applyCameraEnhance(localStreamRef.current)
+  }, [settings.cameraEnhance, applyCameraEnhance])
 
   // ----- local stream -----
   const replaceLocalStream = useCallback((stream: MediaStream | null) => {
@@ -1053,17 +1052,16 @@ export function ShareRoom() {
             : QUALITY_CONSTRAINTS[settings.defaultQuality]),
           facingMode: { ideal: settings.cameraFacing === 'environment' ? 'environment' : 'user' },
         }
-        if (settings.cameraEnhance) {
-          videoConstraints.advanced = [CAMERA_ENHANCEMENT]
-        }
         // Parâmetros de captura: eco/ruído só ativos quando o usuário escolher.
-        // autoGainControl fica ativo para dar volume natural sem abafar; quando a
-        // sensibilidade está ligada, o ganho é controlado pelo WebAudio abaixo.
+        // O ganho automático só liga quando alguma opção de tratamento estiver
+        // ativa — desligado, a voz sai natural e sem abafar.
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: settings.echoCancellation,
             noiseSuppression: settings.noiseSuppression,
-            autoGainControl: !settings.micSensitivity,
+            autoGainControl:
+              !settings.micSensitivity &&
+              (settings.echoCancellation || settings.noiseSuppression),
           },
           video: withVideo ? videoConstraints : false,
         })
@@ -1077,7 +1075,7 @@ export function ShareRoom() {
         toast.error('Não foi possível acessar microfone/câmera')
       }
     },
-    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.cameraEnhance, settings.cameraFacing, settings.defaultQuality, applyMicGain, applyQualityToStreams]
+    [replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.cameraFacing, settings.defaultQuality, applyMicGain, applyQualityToStreams]
   )
 
   // Quando o usuário liga/desliga o corte de ruído, o eco ou a sensibilidade,
@@ -1087,6 +1085,27 @@ export function ShareRoom() {
     void reacquire(camOn, !micOn)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.noiseSuppression, settings.echoCancellation, settings.micSensitivity])
+
+  // Aplica os ajustes de eco/ruído/ganho diretamente na trilha de áudio ativa,
+  // em tempo real, sem reabrir o microfone. Garante que ligar o interruptor de
+  // Eco ou Ruído realmente ative o recurso no momento do clique.
+  useEffect(() => {
+    const stream = localStreamRef.current
+    if (!stream) return
+    const track = stream.getAudioTracks()[0]
+    if (!track) return
+    void track
+      .applyConstraints({
+        echoCancellation: settings.echoCancellation,
+        noiseSuppression: settings.noiseSuppression,
+        autoGainControl:
+          !settings.micSensitivity &&
+          (settings.echoCancellation || settings.noiseSuppression),
+      })
+      .catch(() => {
+        /* navegador não permitiu aplicar ao vivo — o reacquire reabre o mic */
+      })
+  }, [settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity])
 
   // Quando o usuário vira a câmera (frontal/traseira), recaptura o vídeo local.
   useEffect(() => {
@@ -2200,8 +2219,8 @@ export function ShareRoom() {
               {screenMuted[tile.id] ? '🔇' : '🔊'}
             </button>
           )}
-          {/* Virar câmera — aparece em tela cheia abaixo dos controles para a câmera local */}
-          {fullscreenTileId === tile.id && tile.isLocal && !tile.isScreen && camOn && (
+          {/* Virar câmera — sempre visível na câmera local, à esquerda do esticar */}
+          {tile.isLocal && !tile.isScreen && camOn && (
             <button
               title={t('cameraFlip')}
               onClick={flipCamera}
