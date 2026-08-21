@@ -113,7 +113,29 @@ function Aba({ active, onClick, label, count }: { active: boolean; onClick: () =
   )
 }
 
-export function FriendsPanel({ onOpenProfile }: { onOpenProfile: OpenProfileFn }) {
+type RoomInvite = {
+  id: string
+  roomId: string
+  roomName: string
+  isPrivate: boolean
+  hasPassword: boolean
+  fromId: string
+  fromName: string
+  fromPhoto?: string | null
+  createdAt: number
+}
+
+export function FriendsPanel({
+  onOpenProfile,
+  roomInvites,
+  onJoinRoom,
+  onDeclineRoomInvite,
+}: {
+  onOpenProfile: OpenProfileFn
+  roomInvites: RoomInvite[]
+  onJoinRoom: (roomId: string) => void
+  onDeclineRoomInvite: (roomId: string) => void
+}) {
   const [data, setData] = useState<SocialData | null>(null)
   const [tab, setTab] = useState<'enviar' | 'convites' | 'amigos'>('enviar')
   const [code, setCode] = useState('')
@@ -223,7 +245,7 @@ export function FriendsPanel({ onOpenProfile }: { onOpenProfile: OpenProfileFn }
           {/* Abas */}
           <div className="flex gap-2">
             <Aba active={tab === 'enviar'} onClick={() => setTab('enviar')} label="Enviar" />
-            <Aba active={tab === 'convites'} onClick={() => setTab('convites')} label="Convites" count={data.requests.length} />
+            <Aba active={tab === 'convites'} onClick={() => setTab('convites')} label="Convites" count={data.requests.length + roomInvites.length} />
             <Aba active={tab === 'amigos'} onClick={() => setTab('amigos')} label="Amigos" count={data.friends.length} />
           </div>
         </>
@@ -258,47 +280,92 @@ export function FriendsPanel({ onOpenProfile }: { onOpenProfile: OpenProfileFn }
           </div>
         )}
 
-        {tab === 'convites' &&
-          (data && data.requests.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-white/10 px-4 py-10 text-center">
-              <span className="text-3xl">📭</span>
-              <p className="text-sm font-semibold text-slate-300">Nenhum convite pendente</p>
-              <p className="text-xs text-slate-500">Quando alguém te adicionar, aparece aqui.</p>
-            </div>
-          ) : (
-            data?.requests.map((r) => (
-              <div
-                key={r.requestId}
-                className="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 px-3 py-2.5 transition hover:bg-white/10"
-              >
-                <div className="rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-0.5">
-                  <div className="rounded-full bg-slate-900 p-0.5">
-                    <Avatar name={r.displayName} photo={r.photo} size={36} />
+        {tab === 'convites' && data && (
+          <div className="space-y-3">
+            {/* Convites de amizade */}
+            {data.requests.length > 0 ? (
+              <div className="space-y-2">
+                {data.requests.map((r) => (
+                  <div
+                    key={r.requestId}
+                    className="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 px-3 py-2.5 transition hover:bg-white/10"
+                  >
+                    <div className="rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-0.5">
+                      <div className="rounded-full bg-slate-900 p-0.5">
+                        <Avatar name={r.displayName} photo={r.photo} size={36} />
+                      </div>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-white">{r.displayName}</p>
+                      <p className="text-[11px] text-slate-500">quer ser seu amigo</p>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => void accept(r.fromId)}
+                        title="Aceitar"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/20 text-base font-bold text-emerald-300 ring-1 ring-emerald-400/40 transition hover:bg-emerald-500/40 hover:text-white"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        onClick={() => void decline(r.fromId)}
+                        title="Recusar"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-500/20 text-base font-bold text-rose-300 ring-1 ring-rose-400/40 transition hover:bg-rose-500/40 hover:text-white"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-white">{r.displayName}</p>
-                  <p className="text-[11px] text-slate-500">quer ser seu amigo</p>
-                </div>
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={() => void accept(r.fromId)}
-                    title="Aceitar"
-                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/20 text-base font-bold text-emerald-300 ring-1 ring-emerald-400/40 transition hover:bg-emerald-500/40 hover:text-white"
-                  >
-                    ✓
-                  </button>
-                  <button
-                    onClick={() => void decline(r.fromId)}
-                    title="Recusar"
-                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-500/20 text-base font-bold text-rose-300 ring-1 ring-rose-400/40 transition hover:bg-rose-500/40 hover:text-white"
-                  >
-                    ✕
-                  </button>
-                </div>
+                ))}
               </div>
-            ))
-          ))}
+            ) : (
+              <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center">
+                <span className="text-3xl">📭</span>
+                <p className="text-sm font-semibold text-slate-300">Nenhum convite de amizade</p>
+                <p className="text-xs text-slate-500">Quando alguém te adicionar, aparece aqui.</p>
+              </div>
+            )}
+
+            {/* Caixa de correio: convites de sala */}
+            <div className="rounded-2xl border border-white/5 bg-white/5 p-3">
+              <h4 className="mb-2 text-sm font-bold text-slate-200">📨 Convites de sala</h4>
+              {roomInvites.length === 0 ? (
+                <p className="py-3 text-center text-xs text-slate-500">
+                  Nenhum convite de sala. Quando um amigo te convidar, a sala aparece aqui.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {roomInvites.map((inv) => (
+                    <div key={inv.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
+                      <Avatar name={inv.fromName} photo={inv.fromPhoto} size={32} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-200">
+                          {inv.fromName} convidou para &quot;{inv.roomName}&quot;
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          {inv.isPrivate ? '🔒 Sala privada' : '🌐 Sala pública'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => onJoinRoom(inv.roomId)}
+                        className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
+                      >
+                        Entrar na sala
+                      </button>
+                      <button
+                        onClick={() => onDeclineRoomInvite(inv.roomId)}
+                        className="shrink-0 rounded-lg bg-white/5 px-2 py-1.5 text-xs font-medium text-slate-400 ring-1 ring-white/10 transition hover:bg-white/10"
+                        title="Recusar"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {tab === 'amigos' &&
           (data && data.friends.length === 0 ? (

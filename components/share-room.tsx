@@ -3496,63 +3496,16 @@ export function ShareRoom() {
                         onOpenProfile={(p) =>
                           setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined, bio: p.bio ?? undefined, cover: p.cover ?? undefined })
                         }
+                        roomInvites={roomInvites}
+                        onJoinRoom={(roomId) => {
+                          void joinChannel(roomId).then(() => void loadRooms())
+                        }}
+                        onDeclineRoomInvite={(roomId) =>
+                          void apiClient
+                            .delete(`/api/rooms/invite?roomId=${encodeURIComponent(roomId)}`)
+                            .then(() => void loadRooms())
+                        }
                       />
-                    </section>
-                    {/* Convites de sala: entrar em salas de amigos sem senha */}
-                    <section className="share-panel-soft rounded-xl p-3">
-                      <h4 className="mb-2 text-sm font-bold">📨 Convites de sala</h4>
-                      {roomInvites.length === 0 ? (
-                        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/5 p-4 text-center">
-                          <span className="text-2xl">💌</span>
-                          <p className="text-xs text-slate-400">Você ainda não tem convites de sala.</p>
-                          <p className="max-w-xs text-[10px] leading-snug text-slate-500">
-                            Quando um amigo te convidar, a sala aparecerá aqui e você poderá entrar
-                            sem precisar de senha.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
-                          {roomInvites.map((inv) => (
-                            <div
-                              key={inv.id}
-                              className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2"
-                            >
-                              {inv.fromPhoto ? (
-                                <img src={inv.fromPhoto} alt="" className="h-8 w-8 rounded-full object-cover" />
-                              ) : (
-                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-500/30 text-sm font-bold">
-                                  {(inv.fromName || '?')[0]}
-                                </span>
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-semibold text-slate-200">
-                                  {inv.fromName} convidou para &quot;{inv.roomName}&quot;
-                                </p>
-                                <p className="text-[10px] text-slate-400">
-                                  {inv.isPrivate ? '🔒 Sala privada' : '🌐 Sala pública'}
-                                </p>
-                              </div>
-                              <button
-                                onClick={() => void joinChannel(inv.roomId)}
-                                className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
-                              >
-                                Entrar na sala
-                              </button>
-                              <button
-                                onClick={() => {
-                                  void apiClient
-                                    .delete(`/api/rooms/invite?roomId=${encodeURIComponent(inv.roomId)}`)
-                                    .then(() => void loadRooms())
-                                }}
-                                className="shrink-0 rounded-lg bg-white/5 px-2 py-1.5 text-xs font-medium text-slate-400 ring-1 ring-white/10 transition hover:bg-white/10"
-                                title="Recusar"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
                     </section>
                   </>
                 ) : (
