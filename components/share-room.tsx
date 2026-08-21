@@ -1515,6 +1515,25 @@ export function ShareRoom() {
     }
     try {
       const videoConstraints = quality === 'auto' ? true : QUALITY_CONSTRAINTS[quality]
+      // Detecção de suporte + orientação por aparelho. O navegador só deixa
+      // capturar a tela pelo diálogo do sistema (getDisplayMedia): no Android
+      // ele abre na hora; no iPhone (iOS 15+) é preciso iniciar a transmissão
+      // pelo Centro de Controle — por isso damos a instrução antes de chamar.
+      const hasDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      if (!hasDisplayMedia) {
+        toast.error(
+          isIOS
+            ? 'Este iPhone não expõe captura de tela. Use o Safari mais recente ou atualize o iOS.'
+            : 'Compartilhamento de tela não é suportado neste navegador.'
+        )
+        return
+      }
+      if (isIOS) {
+        toast.info(
+          'iPhone: abra o Centro de Controle e toque em "Transmissão de tela" para começar a compartilhar.'
+        )
+      }
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: videoConstraints,
         audio: screenWithAudio,
@@ -1955,6 +1974,24 @@ export function ShareRoom() {
     return list
   }, [inCall, name, profile, remotePeers, onlineMembers, mutedPeers, localMediaStream])
   const extraScreens = screenTiles.slice(2)
+  // Áudio de voz de cada participante remoto (o stream de câmera/microfone, não
+  // a tela). É montado de forma FIXA em qualquer aba para que o som continue
+  // saindo mesmo quando o usuário está vendo "Câmeras" ou "Telas" (que só
+  // renderizam vídeos e por isso desmontavam o áudio de quem é só-voz).
+  const remoteVoice = useMemo(() => {
+    if (!inCall) return []
+    const list: { id: string; peerId: string; stream: MediaStream; muted: boolean }[] = []
+    for (const [pid, peer] of Object.entries(remotePeers)) {
+      const screenIds = screenTrackIdsRef.current[pid] ?? []
+      const voice = peer.streams.find((s) => {
+        const vid = s.getVideoTracks()[0]?.id ?? ''
+        return !screenIds.includes(vid)
+      })
+      if (!voice) continue
+      list.push({ id: `voice-${pid}`, peerId: pid, stream: voice, muted: mutedPeers[pid] ?? false })
+    }
+    return list
+  }, [inCall, remotePeers, mutedPeers])
   // Câmeras ativas (inclui a minha) e se há telas/câmeras para exibir nas abas.
   const cameraTiles = tiles.filter((t) => !t.isScreen && t.hasVideo)
   const hasCameras = cameraTiles.length > 0
@@ -2001,7 +2038,10 @@ export function ShareRoom() {
         <video
           autoPlay
           playsInline
-          muted={tile.isLocal || tile.muted || !!screenMuted[tile.id]}
+          // Som de câmera remota vem do bloco de áudio fixo (remoteVoice);
+          // aqui muto o vídeo para não duplicar. Telas compartilhadas seguem
+          // com o próprio som (screenMuted).
+          muted={tile.isLocal || (tile.isScreen ? !!screenMuted[tile.id] : true)}
           // Realce leve (GPU, sem custo de CPU/banda): deixa a imagem mais
           // nítida e viva, simulando uma câmera mais limpa/HD.
           style={{ filter: 'contrast(1.06) saturate(1.12) brightness(1.02)' }}
@@ -2010,16 +2050,8 @@ export function ShareRoom() {
         />
       ) : (
         <>
-          {/* Áudio oculto para poder mutar participantes só-voz. */}
-          {!tile.isLocal && (
-            <audio
-              autoPlay
-              playsInline
-              muted={tile.muted}
-              className="hidden"
-              ref={(el) => bind(el, tile.stream)}
-            />
-          )}
+          {/* O áudio dos participantes só-voz é tocado pelo bloco fixo no topo
+              de "renderMain", que fica montado em qualquer aba (ver remoteVoice). */}
           <div className="flex h-full w-full flex-col items-center justify-center gap-1 p-1">
             <div className="relative">
               <div
@@ -2191,7 +2223,9 @@ export function ShareRoom() {
           <video
             autoPlay
             playsInline
-            muted={tile.isLocal || tile.muted}
+            // Som de câmera remota vem do áudio fixo (remoteVoice). Telas
+            // compartilhadas seguem com o próprio som (screenMuted).
+            muted={tile.isLocal || (tile.isScreen ? !!screenMuted[tile.id] : true)}
             className={`h-full w-full ${tile.isScreen ? 'object-contain' : 'object-cover'}`}
             ref={(el) => bind(el, tile.stream)}
           />
@@ -2244,6 +2278,18 @@ export function ShareRoom() {
     }
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto py-2">
+        {/* Áudio fixo de todos os participantes: fica montado em qualquer aba para
+            o som nunca cortar (mesmo em Câmeras/Telas que só mostram vídeos). */}
+        {remoteVoice.map((v) => (
+          <audio
+            key={v.id}
+            autoPlay
+            playsInline
+            muted={v.muted}
+            className="hidden"
+            ref={(el) => bind(el, v.stream)}
+          />
+        ))}
         {/* Aba de CÂMERAS */}
         {callView === 'cameras' && (
           <>
