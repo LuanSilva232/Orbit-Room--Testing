@@ -2662,18 +2662,18 @@ export function ShareRoom() {
                           <button
                             onClick={() => void openInvite(room)}
                             aria-label="Convidar amigos"
-                            title="Convidar amigos"
-                            className="shrink-0 rounded-md bg-indigo-500/20 px-2 py-1 text-xs text-indigo-200 transition hover:bg-indigo-500/30"
+                            title="Convidar amigos para esta sala"
+                            className="shrink-0 rounded-md bg-indigo-500/20 px-2 py-1 text-xs font-semibold text-indigo-200 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/30"
                           >
-                            📨
+                            📨 Convidar
                           </button>
                           <button
                             onClick={() => startEditRoom(room)}
                             aria-label="Editar sala"
-                            title="Editar sala"
+                            title="Editar nome, privacidade e senha da sala"
                             className="shrink-0 rounded-md bg-white/5 px-2 py-1 text-xs text-amber-200 transition hover:bg-amber-500/20"
                           >
-                            ✏️
+                            ✏️ Editar
                           </button>
                           <button
                             onClick={() => {
