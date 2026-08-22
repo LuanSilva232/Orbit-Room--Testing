@@ -208,6 +208,24 @@ export class RtcEngine {
     this.events.onPeerGone(id)
   }
 
+  // Reconstrói a conexão WebRTC com um participante SEM apagar o card dele.
+  // Usado quando a aba volta do fundo (ex.: o usuário foi ao Instagram e o
+  // navegador suspendeu o batimento): fechamos a conexão antiga (que pode ter
+  // "morrido" enquanto a página estava em segundo plano) e abrimos uma nova,
+  // mantendo o perfil/foto/stream na tela.
+  reconnect(id: string): void {
+    if (id === this.myId) return
+    const old = this.peers.get(id)
+    if (!old) return
+    try {
+      old.pc.close()
+    } catch {
+      /* noop */
+    }
+    this.peers.delete(id)
+    this.addPeer(id)
+  }
+
   closeAll(): void {
     for (const id of Array.from(this.peers.keys())) {
       this.removePeer(id)

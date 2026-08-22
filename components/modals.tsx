@@ -17,7 +17,20 @@ export function Avatar({
   className?: string
   isAnonymous?: boolean
 }) {
-  // Usuário anônimo (sem conta Google): vira um fantasma de easter egg. 👻
+  // A foto digitada (ou enviada no perfil) tem prioridade: se o usuário já
+  // escolheu uma imagem, ela aparece mesmo sem estar logado. O fantasma 👻 só
+  // é usado para quem não tem foto (easter egg de conta anônima).
+  if (photo) {
+    return (
+      <img
+        src={photo}
+        alt={name ?? 'Perfil'}
+        width={size}
+        height={size}
+        className={`rounded-full object-cover ${className}`}
+      />
+    )
+  }
   if (isAnonymous) {
     return (
       <div
@@ -31,17 +44,6 @@ export function Avatar({
           👻
         </span>
       </div>
-    )
-  }
-  if (photo) {
-    return (
-      <img
-        src={photo}
-        alt={name ?? 'Perfil'}
-        width={size}
-        height={size}
-        className={`rounded-full object-cover ${className}`}
-      />
     )
   }
   let hash = 0

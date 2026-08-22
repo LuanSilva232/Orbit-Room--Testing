@@ -497,6 +497,7 @@ export function ShareRoom() {
   const [channel, setChannel] = useState<ChannelId>('sala-1')
   const [inCall, setInCall] = useState(false)
   const [onlineMembers, setOnlineMembers] = useState<Member[]>([])
+  const onlineMembersRef = useRef<Member[]>([])
   const [offlineMembers, setOfflineMembers] = useState<Member[]>([])
   const [remotePeers, setRemotePeers] = useState<Record<string, Remote>>({})
   const [chat, setChat] = useState<ChatMessage[]>([])
@@ -956,6 +957,44 @@ export function ShareRoom() {
       window.removeEventListener('beforeunload', onHide)
     }
   }, [])
+
+  // Quando a aba volta para o foco após ficar em segundo plano (ex.: o usuário
+  // foi ao Instagram e voltou), o navegador pausa os timers do site e a chamada
+  // pode "cair". Aqui a gente repara a conexão na hora: renova a presença no
+  // servidor e reconstrói as conexões WebRTC com os participantes.
+  const hiddenSinceRef = useRef<number | null>(null)
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenSinceRef.current = Date.now()
+        return
+      }
+      // Ficou visível de novo.
+      const awayMs = hiddenSinceRef.current ? Date.now() - hiddenSinceRef.current : 0
+      hiddenSinceRef.current = null
+      if (!inCallRef.current || !channelRef.current) return
+      // 1) Atualiza o "last_seen" no servidor imediatamente (o polling estava
+      //    suspenso, então o servidor podia achar que a gente saiu da sala).
+      registerPresence()
+      if (awayMs < 1500) return
+      // 2) Reconstrói as conexões com quem está na mesma sala (sem apagar o card).
+      const engine = engineRef.current
+      if (!engine) return
+      const seen = new Set<string>()
+      for (const m of onlineMembersRef.current) {
+        if (m.channel !== channelRef.current || m.clientId === clientIdRef.current) continue
+        seen.add(m.clientId)
+        if (engine.hasPeer(m.clientId)) engine.reconnect(m.clientId)
+        else engine.addPeer(m.clientId)
+      }
+      // Segurança: reconecta também qualquer peer que ainda esteja na lista local.
+      for (const pid of Object.keys(remotePeersRef.current)) {
+        if (pid !== clientIdRef.current && !seen.has(pid)) engine.reconnect(pid)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [registerPresence])
 
   const bind = useCallback((el: HTMLMediaElement | null, stream: MediaStream | null) => {
     if (!el || !stream) return
@@ -1490,6 +1529,7 @@ export function ShareRoom() {
         }>(`/api/rtc?action=mailbox&clientId=${clientIdRef.current}`)
         if (!res.success) return
         setOnlineMembers(res.data?.members ?? [])
+        onlineMembersRef.current = res.data?.members ?? []
         setOfflineMembers(res.data?.offlineMembers ?? [])
         // Prazo de exclusão (anônimos): sincroniza do servidor. Quem entrou com
         // Google usa o status da conta, então não sobrescreve pelo polling aqui.
@@ -2161,6 +2201,7 @@ export function ShareRoom() {
       tiles.push({
         id: 'local-screen',
         name: `${name} · tela`,
+        photo: profile.photo,
         stream: screenStreamRef.current,
         hasVideo: true,
         isLocal: true,
@@ -2312,7 +2353,7 @@ export function ShareRoom() {
       }}
       className={`relative overflow-hidden rounded-xl transition-shadow duration-200 ${
         tile.hasVideo
-          ? speakers[tile.id]
+          ? speakers[tile.stream ? tile.stream.id : '']
             ? 'border border-emerald-400 ring-2 ring-emerald-400/40 shadow-[0_0_20px_rgba(16,185,129,0.4)]'
             : 'border border-white/10 bg-black/60'
           : 'bg-transparent'
@@ -2346,12 +2387,12 @@ export function ShareRoom() {
             <div className="relative">
               <div
                 className={`flex h-12 w-12 items-center justify-center overflow-hidden rounded-full transition-shadow duration-150 ${
-                  speakers[tile.id] ? 'ring-2 ring-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.55)]' : ''
+                  speakers[tile.stream ? tile.stream.id : ''] ? 'ring-2 ring-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.55)]' : ''
                 }`}
               >
                 <Avatar name={tile.name} photo={tile.photo} size={48} />
               </div>
-              {speakers[tile.id] && (
+              {speakers[tile.stream ? tile.stream.id : ''] && (
                 <span className="absolute inset-0 animate-pulse rounded-full ring-2 ring-emerald-400" />
               )}
               {(tile.isLocal ? !micOn : tile.muted) && (
@@ -2473,13 +2514,18 @@ export function ShareRoom() {
       tiles.forEach((tile) => {
         const muted = tile.isLocal ? !micOn : tile.muted
         if (muted || !tile.stream) {
-          if (next[tile.id]) {
-            delete next[tile.id]
+          const key = tile.stream ? tile.stream.id : tile.id
+          if (next[key]) {
+            delete next[key]
             changed = true
           }
           return
         }
-        const analyser = analysersRef.current.get(tile.stream.id)
+        // Chaveamos por stream.id (e não tile.id): o card de "Perfis" e o tile
+        // principal da MESMA pessoa usam o MESMO stream de voz, então o anel
+        // verde acende na borda do avatar do perfil também — e não só no vídeo.
+        const key = tile.stream.id
+        const analyser = analysersRef.current.get(key)
         if (!analyser) return
         const buf = new Uint8Array(analyser.fftSize)
         analyser.getByteTimeDomainData(buf)
@@ -2490,8 +2536,8 @@ export function ShareRoom() {
         }
         const rms = Math.sqrt(sum / buf.length)
         const speaking = rms > 0.015
-        if (!!next[tile.id] !== speaking) {
-          next[tile.id] = speaking
+        if (!!next[key] !== speaking) {
+          next[key] = speaking
           changed = true
         }
       })
@@ -2512,7 +2558,7 @@ export function ShareRoom() {
           tileElsRef.current[tile.id] = el
         }}
         className={`relative flex-none overflow-hidden rounded-xl border border-white/10 bg-black/70 transition-shadow duration-200 ${
-          speakers[tile.id]
+          speakers[tile.stream ? tile.stream.id : '']
             ? 'ring-2 ring-emerald-400/50 shadow-[0_0_18px_rgba(16,185,129,0.4)]'
             : ''
         } ${
@@ -2537,13 +2583,18 @@ export function ShareRoom() {
         {/* Perfil (foto + nome) no canto inferior esquerdo */}
         <div className="absolute bottom-2 left-2 flex max-w-[80%] items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1">
           <span className="relative flex">
-            <Avatar name={tile.name} photo={tile.photo} size={22} />
-            {speakers[tile.id] && (
+            <Avatar
+              name={tile.name}
+              photo={tile.photo}
+              size={22}
+              className={speakers[tile.stream ? tile.stream.id : ''] ? 'ring-2 ring-emerald-400' : ''}
+            />
+            {speakers[tile.stream ? tile.stream.id : ''] && (
               <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-emerald-400 ring-2 ring-emerald-300/80" />
             )}
           </span>
           <span className="truncate text-[11px] font-semibold text-slate-100">{tile.name}</span>
-          {speakers[tile.id] && (
+          {speakers[tile.stream ? tile.stream.id : ''] && (
             <span className="text-[10px] leading-none text-emerald-300" aria-label="falando">🔊</span>
           )}
         </div>
