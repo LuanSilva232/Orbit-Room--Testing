@@ -1914,7 +1914,7 @@ export function ShareRoom() {
     setMicOn(next)
   }, [micOn, camOn, reacquire])
 
-  const toggleCam = useCallback(() => {
+  const toggleCam = useCallback(async () => {
     const now = Date.now()
     // Trava a religação rápida: desligar e religar em menos de 2,5s faz a câmera
     // piscar/sumir para o outro lado. Exige um respiro entre os toggles.
@@ -1924,10 +1924,88 @@ export function ShareRoom() {
     }
     lastCamToggleAtRef.current = now
     const next = !camOn
-    setCamOn(next)
-    // Não desmuta o microfone se ele já estava mudo.
-    void reacquire(next, !micOn)
-  }, [camOn, micOn, reacquire])
+    const engine = engineRef.current
+    const local = localStreamRef.current
+
+    if (!next) {
+      // Desligar câmera: para SOMENTE o vídeo local, mantendo o microfone intacto
+      // (nada de recriar o áudio — isso era o que fazia o som mutar).
+      setCamOn(false)
+      const vids = local?.getVideoTracks() ?? []
+      vids.forEach((t) => {
+        t.stop()
+        engine?.removeTrack(t)
+      })
+      if (local && vids.length > 0) {
+        vids.forEach((t) => local.removeTrack(t))
+        setLocalMediaStream(local)
+      }
+      orientStopRef.current?.()
+      orientStopRef.current = null
+      return
+    }
+
+    // Ligar câmera: captura apenas o vídeo e o adiciona ao stream local atual,
+    // preservando o microfone do jeito que está (ligado ou mudo).
+    try {
+      const videoConstraints: MediaTrackConstraints = {
+        ...(settings.defaultQuality === 'auto'
+          ? QUALITY_CONSTRAINTS.auto
+          : QUALITY_CONSTRAINTS[settings.defaultQuality]),
+        facingMode: { ideal: settings.cameraFacing === 'environment' ? 'environment' : 'user' },
+      }
+      const vstream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints })
+      if (!local) {
+        // Não havia stream local ainda (ex.: sem microfone) — recria com áudio+vídeo.
+        const audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: settings.echoCancellation,
+            noiseSuppression: settings.noiseSuppression,
+            autoGainControl:
+              !settings.micSensitivity &&
+              (settings.echoCancellation || settings.noiseSuppression),
+          },
+        })
+        const merged = new MediaStream([
+          ...audioStream.getAudioTracks(),
+          ...vstream.getVideoTracks(),
+        ])
+        vstream.getTracks().forEach((t) => t.stop())
+        const outgoing = applyMicGain(merged)
+        replaceLocalStream(outgoing)
+        setCamOn(true)
+        setMicOn(!micOn)
+        applyQualityToStreams(settings.defaultQuality)
+        return
+      }
+      const oriented = reorientCameraStream(vstream, isMobileDevice)
+      const outVid = oriented.stream.getVideoTracks()[0]
+      if (outVid) {
+        local.addTrack(outVid)
+        engine?.addTrack(outVid, local)
+        setCamOn(true)
+        setLocalMediaStream(local)
+        orientStopRef.current = oriented.stop
+      } else {
+        vstream.getTracks().forEach((t) => t.stop())
+        setCamOn(true)
+      }
+    } catch {
+      toast.error('Não foi possível acessar a câmera')
+    }
+  }, [
+    camOn,
+    micOn,
+    replaceLocalStream,
+    applyMicGain,
+    applyQualityToStreams,
+    settings.cameraFacing,
+    settings.defaultQuality,
+    settings.echoCancellation,
+    settings.noiseSuppression,
+    settings.micSensitivity,
+    isMobileDevice,
+  ])
 
   const toggleScreen = useCallback(async () => {
     const engine = engineRef.current

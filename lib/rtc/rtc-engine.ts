@@ -199,6 +199,25 @@ export class RtcEngine {
     }
   }
 
+  // Liga/desliga a CÂMERA (trilha de vídeo) sem recriar o microfone. Usado ao
+  // alternar o vídeo: remove apenas o track de vídeo de todos os peers, deixando
+  // o áudio exatamente como estava.
+  removeTrack(track: MediaStreamTrack): void {
+    for (const peer of this.peers.values()) {
+      const sender = peer.pc.getSenders().find((s) => s.track === track)
+      if (sender) peer.pc.removeTrack(sender)
+    }
+  }
+
+  // Liga a CÂMERA (adiciona uma trilha de vídeo nova a todos os peers) mantendo
+  // o áudio atual, sem refazer o microfone.
+  addTrack(track: MediaStreamTrack, stream: MediaStream): void {
+    for (const peer of this.peers.values()) {
+      if (peer.pc.getSenders().find((s) => s.track === track)) continue
+      peer.pc.addTrack(track, stream)
+    }
+  }
+
   // Reinicia apenas o transporte (ICE) de uma conexão existente, sem apagar o
   // participante nem fechar a chamada. Usado quando a aba volta do segundo plano
   // para re-estabelecer o fluxo de mídia que o navegador suspendeu.
@@ -263,3 +282,4 @@ export class RtcEngine {
     return this.peers.size > 0
   }
 }
+
