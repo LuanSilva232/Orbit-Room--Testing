@@ -339,6 +339,9 @@ const STRINGS = {
   cameraEnhance: ['Melhorar nitidez', 'Enhance sharpness'],
   cameraEnhanceDesc: ['Deixa a imagem mais nítida e com mais qualidade na chamada.', 'Makes the image sharper and higher quality during calls.'],
   cameraFlip: ['Virar câmera (frontal/traseira)', 'Flip camera (front/back)'],
+  videoVivid: ['Cores vívidas (contraste e saturação)', 'Vivid colors (contrast and saturation)'],
+  videoVividDesc: ['Deixa imagens e vídeos com mais contraste, nitidez e cor. Desligado por padrão para não esquentar o aparelho.', 'Makes images and videos sharper with more contrast and color. Off by default to avoid overheating.'],
+  videoVividHint: ['Segure ativado evita superaquecimento.', 'Keep off to avoid overheating.'],
   aboutText: [
     'O Orbit Room é uma plataforma de conversas ao vivo em voz e vídeo, criada para aproximar pessoas e reunir todo mundo em salas compartilhadas em tempo real — não importa a distância.\n\n#Por que o Orbit Room existe?\n\nEstamos sempre conectados, mas muitas vezes distantes. O Orbit Room nasceu para devolver ao mundo digital o calor de uma conversa cara a cara: um lugar simples em que basta entrar numa sala para se sentir junto de verdade.\n\n• Reunir pessoas ao redor de uma conversa viva, sem fricção\n• Trazer de volta a sensação de “estar na mesma sala”, de qualquer lugar\n• Tornar as conversas reais acessíveis e naturais para todos\n\nMais do que um aplicativo de chamadas, é um espaço de presença e conexão — feito para quem quer conversar, e não apenas conectar.',
     'Orbit Room is a live voice and video conversation platform, created to bring people together and gather everyone in shared rooms in real time — no matter the distance.\n\n#Why does Orbit Room exist?\n\nWe are always connected, yet often distant. Orbit Room was born to bring the warmth of a face-to-face conversation back to the digital world: a simple place where you just join a room to truly feel together.\n\n• Bring people together around a living conversation, without friction\n• Bring back the feeling of “being in the same room”, from anywhere\n• Make real conversations accessible and natural for everyone\n\nMore than a calling app, it is a space for presence and connection — made for those who want to talk, not just connect.',
@@ -734,6 +737,7 @@ export function ShareRoom() {
     micSensitivity: boolean
     micGain: number
     cameraEnhance: boolean
+    videoVivid: boolean
     cameraFacing: 'user' | 'environment'
     defaultQuality: Quality
     theme: 'dark' | 'light'
@@ -749,6 +753,7 @@ export function ShareRoom() {
     micSensitivity: false,
     micGain: 1,
     cameraEnhance: false,
+    videoVivid: false,
     cameraFacing: 'user',
     defaultQuality: 'auto',
     theme: 'dark',
@@ -2561,9 +2566,10 @@ export function ShareRoom() {
           // aqui muto o vídeo para não duplicar. Telas compartilhadas seguem
           // com o próprio som (screenMuted).
           muted={tile.isLocal || (tile.isScreen ? !!screenMuted[tile.id] : true)}
-          // Realce leve (GPU, sem custo de CPU/banda): deixa a imagem mais
-          // nítida e viva, simulando uma câmera mais limpa/HD.
-          style={{ filter: 'contrast(1.06) saturate(1.12) brightness(1.02)' }}
+          // Filtro de cor/contraste só quando o usuário ligar "Cores vívidas" nas
+          // configurações. Filtro em <video> força o processador gráfico a recompor
+          // todo quadro e esquenta no celular; por isso fica desligado por padrão.
+          style={{ filter: settings.videoVivid ? 'contrast(1.08) saturate(1.14) brightness(1.03)' : 'none' }}
           className="h-full w-full object-cover"
           ref={(el) => bind(el, tile.stream)}
         />
@@ -4304,6 +4310,15 @@ export function ShareRoom() {
                   title={t('cameraEnhance')}
                   desc={t('cameraEnhanceDesc')}
                 />
+                <div className="mt-2 border-t border-white/5 pt-2">
+                  <SwitchRow
+                    checked={settings.videoVivid}
+                    onChecked={(v) => setSetting('videoVivid', v)}
+                    title={t('videoVivid')}
+                    desc={t('videoVividDesc')}
+                  />
+                  <p className="mt-1 text-[11px] leading-snug text-slate-500">{t('videoVividHint')}</p>
+                </div>
               </section>
               )}
 
@@ -5038,7 +5053,7 @@ export function ShareRoom() {
                           autoPlay
                           playsInline
                           muted={pLocal || (pScreen ? !!screenMuted[pt.id] : true)}
-                          style={{ filter: 'contrast(1.06) saturate(1.12) brightness(1.02)' }}
+                          style={{ filter: settings.videoVivid ? 'contrast(1.08) saturate(1.14) brightness(1.03)' : 'none' }}
                           className="h-full w-full object-contain"
                           ref={(el) => {
                             if (el) bind(el, pt.stream)
@@ -5098,7 +5113,7 @@ export function ShareRoom() {
                   autoPlay
                   playsInline
                   muted={isLocal || (isScreen ? !!screenMuted[tile.id] : true)}
-                  style={{ filter: 'contrast(1.06) saturate(1.12) brightness(1.02)' }}
+                  style={{ filter: settings.videoVivid ? 'contrast(1.08) saturate(1.14) brightness(1.03)' : 'none' }}
                   className="h-full w-full object-contain"
                   ref={(el) => {
                     bind(el, tile.stream)
