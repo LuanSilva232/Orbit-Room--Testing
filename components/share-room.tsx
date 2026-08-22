@@ -1028,6 +1028,34 @@ export function ShareRoom() {
     })
   }, [settings.volume])
 
+  // Ao voltar de uma aba em segundo plano (trocar de página/minimizar a janela
+  // no desktop ou no celular), o navegador pode deixar o vídeo da câmera e o
+  // compartilhamento de tela num frame congelado. Aqui forçamos a reprodução ao
+  // vivo: reatribuímos a stream e chamamos play() de todos os elementos, para o
+  // vídeo voltar em tempo real assim que a aba volta ao foco.
+  useEffect(() => {
+    const resumeOnVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (document.fullscreenElement) return
+      mediaElsRef.current.forEach((el) => {
+        try {
+          el.autoplay = true
+          const s = el.srcObject as MediaStream | null
+          if (typeof el.play === 'function' && el.paused) void el.play().catch(() => undefined)
+          if (typeof s?.getVideoTracks === 'function' && s.getVideoTracks().length > 0) {
+            el.srcObject = null
+            el.srcObject = s
+            if (typeof el.play === 'function') void el.play().catch(() => undefined)
+          }
+        } catch {
+          /* elemento já removido do DOM */
+        }
+      })
+    }
+    document.addEventListener('visibilitychange', resumeOnVisible)
+    return () => document.removeEventListener('visibilitychange', resumeOnVisible)
+  }, [])
+
   // Ao sair da tela cheia (desktop ou mobile/iOS), o navegador costuma pausar o
   // vídeo — o que congela o quadradinho numa imagem parada. Este ouvinte retoma
   // automaticamente a reprodução de todos os participantes assim que a tela
