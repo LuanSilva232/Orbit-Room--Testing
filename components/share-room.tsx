@@ -1396,7 +1396,14 @@ export function ShareRoom() {
         await engine.handleSignal(msg.from, msg.kind, msg.data)
       } else if (msg.type === 'peer-joined') {
         const peerId = msg.member.clientId
-        if (peerId !== clientIdRef.current && engine.hasPeer(peerId) === false) {
+        if (peerId !== clientIdRef.current) {
+          // Se já existe um peer com esse clientId (ex.: o outro usuário recarregou
+          // a página e reentrou com o MESMO id), recria a conexão: remove o peer
+          // antigo — que pode estar numa conexão morta — e abre um novo. Sem isso,
+          // o áudio do microfone dele não volta até sair/entrar da sala de novo.
+          if (engine.hasPeer(peerId)) {
+            engine.removePeer(peerId)
+          }
           engine.addPeer(peerId)
         }
         const existing = remotePeersRef.current[peerId]

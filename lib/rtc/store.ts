@@ -579,10 +579,12 @@ export async function joinChannel(
   await getSql()`DELETE FROM rtc_mailbox WHERE to_client = ${clientId} AND payload->>'type' = 'kicked'`
 
   if (previous && previous.channel === channel) {
-    // Reentrada no MESMO canal. Se o usuário tinha saído (left_at preenchido),
-    // é uma nova entrada de fato: avisa os demais como peer-joined para que
-    // recriem a conexão WebRTC. Caso contrário, é só atualização de perfil.
-    const wasAway = previous.left_at !== null && previous.left_at !== undefined
+    // Reentrada no MESMO canal. Sempre avisa como "peer-joined" para que os
+    // demais recriem a conexão WebRTC — e não apenas "peer-updated".
+    // Isso é essencial quando o usuário recarregou a página: o clientId é
+    // reutilizado e o left_at fica nulo (sem "leave"), então se o servidor
+    // tratasse como atualização de perfil, o peer remoto ficaria preso numa
+    // conexão morta e o áudio do microfone não voltaria até sair/entrar de novo.
     await getSql()`
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null}, cover = ${cover ?? null},
@@ -590,22 +592,18 @@ export async function joinChannel(
           last_ip = COALESCE(${ip ?? null}, last_ip)
       WHERE client_id = ${clientId}
     `
-    if (wasAway) {
-      const rejoined: Member = {
-        clientId,
-        name,
-        channel,
-        joinedAt: Number(previous.joined_at),
-        photo,
-        bio,
-        cover,
-        isAnonymous: !userId,
-        userId: userId ?? undefined,
-      }
-      await notifyChannel(channel, () => ({ type: 'peer-joined', member: rejoined }), clientId)
-    } else {
-      await notifyChannel(channel, (m) => ({ type: 'peer-updated', member: m }), clientId)
+    const rejoined: Member = {
+      clientId,
+      name,
+      channel,
+      joinedAt: Number(previous.joined_at),
+      photo,
+      bio,
+      cover,
+      isAnonymous: !userId,
+      userId: userId ?? undefined,
     }
+    await notifyChannel(channel, () => ({ type: 'peer-joined', member: rejoined }), clientId)
     await refreshSoloState(channel)
     const members = (await channelRows(channel))
       .filter((r) => r.client_id !== clientId)
