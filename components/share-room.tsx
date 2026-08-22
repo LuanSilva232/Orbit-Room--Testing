@@ -1174,10 +1174,10 @@ export function ShareRoom() {
     [camOn, localMediaStream]
   )
 
-  // O botão de fixar aparece nas câmeras dos OUTROS participantes. A própria câmera
-  // não tem botão: entra automaticamente como a principal (nº 1, à esquerda). A
-  // opção é exclusiva de computador (no celular não aparece). Cada um monta o seu
-  // próprio conjunto — é individual.
+  // O botão de fixar só aparece no COMPUTADOR (não na versão mobile). No desktop,
+  // aparece nas câmeras de todos os outros participantes — menos na própria câmera
+  // de quem está fixando (ela entra automaticamente como a principal, nº 1). Telas
+  // compartilhadas, não. Cada um monta o seu próprio conjunto — é individual.
   const pinnable = (tile: Tile): boolean => {
     if (isMobileDevice) return false
     if (tile.isLocal) return false
@@ -4987,7 +4987,8 @@ export function ShareRoom() {
             )
           if (pinnedTiles.length > 0) {
             // Ordem na fileira: 1. minha câmera (esquerda) · 2. a que expandi (meio)
-            // · 3. a outra selecionada (direita).
+            // · 3. a outra selecionada (direita). Em retrato as três têm o mesmo
+            // espaço; em paisagem a do meio (a expandida) ganha mais destaque.
             const ownTile = pinnedTiles.find((t) => t.isLocal)
             const remotes = pinnedTiles.filter((t) => !t.isLocal)
             const expanded = pinnedTiles.find((t) => t.id === expandedTileId)
@@ -4996,6 +4997,7 @@ export function ShareRoom() {
             const row = [ownTile, middle, right].filter(
               (t): t is Tile & { stream: MediaStream } => !!t
             )
+            const landscape = !expandedPortrait && row.length > 1
             return (
               <div
                 className="fixed inset-0 z-[160] flex items-center justify-center bg-black"
@@ -5008,10 +5010,13 @@ export function ShareRoom() {
                   {row.map((pt, i) => {
                     const pLocal = !!pt.isLocal
                     const pScreen = !!pt.isScreen
+                    const isMiddle = pt.id === middle?.id
                     return (
                       <div
                         key={pt.id}
-                        className="relative flex-1 overflow-hidden rounded-lg bg-black ring-1 ring-white/10"
+                        className={`relative overflow-hidden rounded-lg bg-black ring-1 ring-white/10 ${
+                          landscape && isMiddle ? 'flex-[1.45]' : 'flex-1'
+                        }`}
                       >
                         <video
                           autoPlay
@@ -5023,9 +5028,19 @@ export function ShareRoom() {
                             if (el) bind(el, pt.stream)
                           }}
                         />
-                        <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-0.5 text-[11px] text-white">
-                          {i + 1}. {pt.name}
+                        <span className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/60 px-2 py-0.5 text-[11px] text-white">
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/15 text-[10px] font-bold">
+                            {i + 1}
+                          </span>
+                          <span className="max-w-[150px] truncate sm:max-w-[200px]">
+                            {pt.name}
+                          </span>
                         </span>
+                        {isMiddle && (
+                          <span className="absolute right-2 top-2 rounded-md bg-emerald-500/80 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                            Foco
+                          </span>
+                        )}
                       </div>
                     )
                   })}
