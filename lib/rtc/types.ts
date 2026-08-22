@@ -11,6 +11,7 @@ export type Member = {
   cover?: string
   isAnonymous: boolean
   userId?: string
+  device?: string
 }
 
 export type Room = {

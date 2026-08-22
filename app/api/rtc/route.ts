@@ -92,6 +92,7 @@ export async function POST(req: Request) {
       const bio = typeof body.bio === 'string' ? body.bio : undefined
       const cover = typeof body.cover === 'string' ? body.cover : undefined
       const password = typeof body.password === 'string' ? body.password.trim() : ''
+      const device = typeof body.device === 'string' ? body.device : undefined
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
       const user = await getCurrentUser()
@@ -104,7 +105,8 @@ export async function POST(req: Request) {
         channel as ChannelId,
         user?.id ?? null,
         clientIp(req),
-        password
+        password,
+        device
       )
       return ok<{ channel: ChannelId; members: Member[] }>({
         channel: result.channel,
@@ -118,9 +120,10 @@ export async function POST(req: Request) {
       const photo = typeof body.photo === 'string' ? body.photo : undefined
       const bio = typeof body.bio === 'string' ? body.bio : undefined
       const cover = typeof body.cover === 'string' ? body.cover : undefined
+      const device = typeof body.device === 'string' ? body.device : undefined
       if (!clientId) throw new ValidationError('clientId é obrigatório')
       const user = await getCurrentUser()
-      await store.registerPresence(clientId, name, photo, bio, cover, user?.id ?? null, clientIp(req))
+      await store.registerPresence(clientId, name, photo, bio, cover, user?.id ?? null, clientIp(req), device)
       return ok<{ ok: boolean }>({ ok: true })
     }
 

@@ -923,8 +923,9 @@ export function ShareRoom() {
       photo: profileRef.current.photo,
       bio: profileRef.current.bio,
       cover: profileRef.current.cover,
+      device: isMobileDevice ? 'mobile' : 'desktop',
     })
-  }, [])
+  }, [isMobileDevice])
 
   // Ao recarregar ou fechar a página, sai da sala automaticamente (sem precisar
   // apertar o botão sair). Evita deixar "fantasma": o usuário some da contagem
@@ -1128,6 +1129,9 @@ export function ShareRoom() {
   // rotação do celular de quem transmite.
   const [expandedTileId, setExpandedTileId] = useState<string | null>(null)
   const [expandedPortrait, setExpandedPortrait] = useState(false)
+  // Câmeras fixadas para a tela cheia em conjunto (até 3). A primeira é sempre a
+  // própria câmera de quem fixou; as seguintes são câmeras dos participantes.
+  const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const handleExpandedSize = useCallback((video: HTMLVideoElement) => {
     const w = video.videoWidth || 0
     const h = video.videoHeight || 0
@@ -1144,6 +1148,40 @@ export function ShareRoom() {
     const h = video?.videoHeight || 0
     setExpandedPortrait(w > 0 && h > 0 ? w < h : false)
   }, [])
+
+  // Fixa/desfixa uma câmera para a tela cheia em conjunto (até 3). A própria
+  // câmera de quem fixa entra sempre como a primeira. O modo continua ativo até
+  // desativar clicando de novo no botão da câmera fixada.
+  const togglePin = useCallback(
+    (tileId: string) => {
+      setPinnedIds((prev) => {
+        if (prev.includes(tileId)) return prev.filter((id) => id !== tileId)
+        if (prev.length >= 3) {
+          toast.info('Máximo de 3 câmeras fixadas')
+          return prev
+        }
+        const selfId = 'local-cam'
+        const selfAvail = camOn && !!localMediaStream?.getVideoTracks().length
+        let next = prev
+        // Garante que a própria câmera fica em primeiro ao começar a fixar.
+        if (selfId !== tileId && selfAvail && !next.includes(selfId)) {
+          next = [selfId, ...next].slice(0, 3)
+        }
+        next = [...next, tileId].slice(0, 3)
+        return next
+      })
+    },
+    [camOn, localMediaStream]
+  )
+
+  // Uma câmera remota só pode ser fixada se o dono dela estiver no celular
+  // (a própria câmera do usuário sempre pode). Telas compartilhadas, não.
+  const pinnable = (tile: Tile): boolean => {
+    if (!tile.hasVideo || tile.isScreen) return false
+    if (tile.isLocal) return true
+    const member = onlineMembers.find((m) => m.clientId === tile.peerId)
+    return member?.device === 'mobile'
+  }
 
   // Vira a câmera entre frontal/traseira, recapturando apenas o vídeo local.
   const flipCamera = useCallback(() => {
@@ -1775,6 +1813,7 @@ export function ShareRoom() {
           bio: profileRef.current.bio,
           channel: channelId,
           password: password ?? '',
+          device: isMobileDevice ? 'mobile' : 'desktop',
         }
       )
       if (!res.success) {
@@ -1805,7 +1844,7 @@ export function ShareRoom() {
         setChat(hist.data.messages)
       }
     },
-    [reacquire, replaceLocalStream, settings.silentMode]
+    [reacquire, replaceLocalStream, settings.silentMode, isMobileDevice]
   )
 
   // Abre uma sala: pede senha se for privada, senão entra direto.
@@ -1891,6 +1930,8 @@ export function ShareRoom() {
     seenChatRef.current = new Set()
     setChat([])
     setCallView('profiles')
+    setExpandedTileId(null)
+    setPinnedIds([])
     inCallRef.current = false
     setInCall(false)
     void apiClient.post('/api/rtc', { action: 'leave', clientId: clientIdRef.current })
@@ -2583,6 +2624,25 @@ export function ShareRoom() {
           >
             ⛶
           </button>
+          {/* Fixar câmera — lado a lado na tela cheia (até 3). Só aparece em
+              câmeras de participantes no celular; a sua própria sempre. */}
+          {pinnable(tile) && (
+            <button
+              title={
+                pinnedIds.includes(tile.id)
+                  ? 'Remover da fixação'
+                  : 'Fixar câmera (mostra até 3 lado a lado na tela cheia)'
+              }
+              onClick={() => togglePin(tile.id)}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm transition ${
+                pinnedIds.includes(tile.id)
+                  ? 'bg-emerald-500/90 text-white hover:bg-emerald-500'
+                  : 'bg-black/50 hover:bg-black/70'
+              }`}
+            >
+              📌
+            </button>
+          )}
         </div>
       )}
 
@@ -4917,6 +4977,62 @@ export function ShareRoom() {
           const isLocal = !!tile.isLocal
           const muted = isLocal ? !micOn : tile.muted
           const portrait = !isScreen && expandedPortrait
+          // Se há câmeras fixadas, mostra todas lado a lado na tela cheia.
+          const pinnedTiles = pinnedIds
+            .map((id) => tiles.find((t) => t.id === id))
+            .filter(
+              (t): t is Tile & { stream: MediaStream } => !!t && !!t.hasVideo && !!t.stream
+            )
+          if (pinnedTiles.length > 0) {
+            return (
+              <div
+                className="fixed inset-0 z-[160] flex items-center justify-center bg-black"
+                onClick={() => setExpandedTileId(null)}
+              >
+                <div
+                  className="flex h-full w-full items-stretch justify-center gap-2 p-2 sm:gap-4 sm:p-4"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {pinnedTiles.map((pt, i) => {
+                    const pLocal = !!pt.isLocal
+                    const pScreen = !!pt.isScreen
+                    return (
+                      <div
+                        key={pt.id}
+                        className="relative flex-1 overflow-hidden rounded-lg bg-black ring-1 ring-white/10"
+                      >
+                        <video
+                          autoPlay
+                          playsInline
+                          muted={pLocal || (pScreen ? !!screenMuted[pt.id] : true)}
+                          style={{ filter: 'contrast(1.06) saturate(1.12) brightness(1.02)' }}
+                          className="h-full w-full object-contain"
+                          ref={(el) => {
+                            if (el) bind(el, pt.stream)
+                          }}
+                        />
+                        <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-0.5 text-[11px] text-white">
+                          {i + 1}. {pt.name}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                <span className="absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 text-[11px] text-slate-300">
+                  Câmeras fixadas
+                </span>
+                <div className="absolute right-2 top-2">
+                  <button
+                    onClick={() => setExpandedTileId(null)}
+                    title="Fechar"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/50 text-base text-white transition hover:bg-black/70"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )
+          }
           return (
             <div
               className="fixed inset-0 z-[160] flex items-center justify-center bg-black"

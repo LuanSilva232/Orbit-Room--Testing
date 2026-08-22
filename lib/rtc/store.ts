@@ -38,6 +38,7 @@ type ClientRow = {
   left_at: string | number | null
   single_since: string | number | null
   user_id: string | null
+  device: string | null
 }
 
 type TrackRow = { client_id: string; track_ids: string[] }
@@ -64,12 +65,13 @@ function toMember(r: ClientRow): Member {
     cover: r.cover ?? undefined,
     isAnonymous: !r.user_id,
     userId: r.user_id ?? undefined,
+    device: r.device ?? undefined,
   }
 }
 
 async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device
     FROM rtc_clients WHERE client_id = ${clientId}
   `
   return rows[0]
@@ -77,7 +79,7 @@ async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
 
 async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
   return getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device
     FROM rtc_clients
     WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - PRESENT_MS}
   `
@@ -485,7 +487,8 @@ export async function registerPresence(
   bio: string | undefined,
   cover: string | undefined,
   userId: string | null,
-  ip: string | null = null
+  ip: string | null = null,
+  device?: string
 ): Promise<void> {
   await ensureDb()
   const now = nowMs()
@@ -495,13 +498,14 @@ export async function registerPresence(
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null},
           cover = ${cover ?? null}, user_id = ${userId}, last_seen = ${now}, left_at = NULL,
-          last_ip = COALESCE(${ip ?? null}, last_ip)
+          last_ip = COALESCE(${ip ?? null}, last_ip),
+          device = COALESCE(${device ?? null}, device)
       WHERE client_id = ${clientId}
     `
   } else {
     await getSql()`
-      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip)
-      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, 'lobby', ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
+      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip, device)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, 'lobby', ${now}, ${now}, NULL, ${userId}, ${ip ?? null}, ${device ?? null})
     `
   }
 }
@@ -515,7 +519,8 @@ export async function joinChannel(
   channel: ChannelId,
   userId: string | null,
   ip: string | null = null,
-  password?: string
+  password?: string,
+  device?: string
 ): Promise<{ ok: true; channel: ChannelId; members: Member[] }> {
   await ensureDb()
   const now = nowMs()
@@ -589,7 +594,8 @@ export async function joinChannel(
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null}, cover = ${cover ?? null},
           user_id = ${userId}, last_seen = ${now}, left_at = NULL, single_since = NULL,
-          last_ip = COALESCE(${ip ?? null}, last_ip)
+          last_ip = COALESCE(${ip ?? null}, last_ip),
+          device = COALESCE(${device ?? null}, device)
       WHERE client_id = ${clientId}
     `
     const rejoined: Member = {
@@ -602,6 +608,7 @@ export async function joinChannel(
       cover,
       isAnonymous: !userId,
       userId: userId ?? undefined,
+      device,
     }
     await notifyChannel(channel, () => ({ type: 'peer-joined', member: rejoined }), clientId)
     await refreshSoloState(channel)
@@ -625,13 +632,14 @@ export async function joinChannel(
       SET channel = ${channel}, name = ${name}, photo = ${photo ?? null},
           bio = ${bio ?? null}, cover = ${cover ?? null}, user_id = ${userId},
           last_seen = ${now}, left_at = NULL, single_since = NULL,
-          last_ip = COALESCE(${ip ?? null}, last_ip)
+          last_ip = COALESCE(${ip ?? null}, last_ip),
+          device = COALESCE(${device ?? null}, device)
       WHERE client_id = ${clientId}
     `
   } else {
     await getSql()`
-      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip)
-      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, ${channel}, ${now}, ${now}, NULL, ${userId}, ${ip ?? null})
+      INSERT INTO rtc_clients (client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, user_id, last_ip, device)
+      VALUES (${clientId}, ${name}, ${photo ?? null}, ${bio ?? null}, ${cover ?? null}, ${channel}, ${now}, ${now}, NULL, ${userId}, ${ip ?? null}, ${device ?? null})
     `
   }
 
@@ -645,6 +653,7 @@ export async function joinChannel(
     cover,
     isAnonymous: !userId,
     userId: userId ?? undefined,
+    device,
   }
 
   await notifyChannel(channel, () => ({ type: 'peer-joined', member }), clientId)
@@ -949,4 +958,3 @@ export async function broadcastAdminMute(targetId: string, muted: boolean): Prom
     await enqueueTo(r.client_id, { type: 'admin-mute', targetId, muted })
   }
 }
-

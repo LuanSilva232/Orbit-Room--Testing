@@ -69,6 +69,10 @@ export function ensureDb(): Promise<void> {
           ADD COLUMN IF NOT EXISTS last_ip text
       `
       await sql`
+        ALTER TABLE rtc_clients
+          ADD COLUMN IF NOT EXISTS device text
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS rtc_mailbox (
           id        bigserial PRIMARY KEY,
           to_client text NOT NULL,
