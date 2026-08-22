@@ -269,4 +269,3 @@ export function ensureDb(): Promise<void> {
   }
   return initPromise
 }
-

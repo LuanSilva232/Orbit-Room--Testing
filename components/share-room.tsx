@@ -1174,17 +1174,15 @@ export function ShareRoom() {
     [camOn, localMediaStream]
   )
 
-  // O botão de fixar só aparece/funciona para quem está no DESKTOP (a opção é
-  // exclusiva de computador). E só nas câmeras dos outros participantes que estão
-  // no celular — pois na tela cheia elas vêm em pé (retrato). A própria câmera não
-  // tem botão: entra automaticamente como a principal (nº 1, à esquerda). Cada um
-  // monta o seu próprio conjunto.
+  // O botão de fixar aparece nas câmeras dos OUTROS participantes. A própria câmera
+  // não tem botão: entra automaticamente como a principal (nº 1, à esquerda). A
+  // opção é exclusiva de computador (no celular não aparece). Cada um monta o seu
+  // próprio conjunto — é individual.
   const pinnable = (tile: Tile): boolean => {
     if (isMobileDevice) return false
     if (tile.isLocal) return false
     if (!tile.hasVideo || tile.isScreen) return false
-    const member = onlineMembers.find((m) => m.clientId === tile.peerId)
-    return member?.device === 'mobile'
+    return true
   }
 
   // Vira a câmera entre frontal/traseira, recapturando apenas o vídeo local.
