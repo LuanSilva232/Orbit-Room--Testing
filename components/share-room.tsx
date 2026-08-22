@@ -2626,25 +2626,6 @@ export function ShareRoom() {
           >
             ⛶
           </button>
-          {/* Fixar câmera — lado a lado na tela cheia (até 3). Só aparece em
-              câmeras de participantes no celular; a sua própria sempre. */}
-          {pinnable(tile) && (
-            <button
-              title={
-                pinnedIds.includes(tile.id)
-                  ? 'Remover da fixação'
-                  : 'Fixar câmera (mostra até 3 lado a lado na tela cheia)'
-              }
-              onClick={() => togglePin(tile.id)}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm transition ${
-                pinnedIds.includes(tile.id)
-                  ? 'bg-emerald-500/90 text-white hover:bg-emerald-500'
-                  : 'bg-black/50 hover:bg-black/70'
-              }`}
-            >
-              📌
-            </button>
-          )}
         </div>
       )}
 
@@ -2822,6 +2803,26 @@ export function ShareRoom() {
           >
             ⛶
           </button>
+          {/* Fixar câmera — lado a lado na tela cheia (até 3). Só no computador,
+              nas câmeras dos outros participantes (a sua entra automática como
+              a principal, nº 1). */}
+          {pinnable(tile) && (
+            <button
+              title={
+                pinnedIds.includes(tile.id)
+                  ? 'Remover da fixação'
+                  : 'Fixar câmera (mostra até 3 lado a lado na tela cheia)'
+              }
+              onClick={() => togglePin(tile.id)}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm text-white transition ${
+                pinnedIds.includes(tile.id)
+                  ? 'bg-emerald-500/90 hover:bg-emerald-500'
+                  : 'bg-black/50 hover:bg-black/70'
+              }`}
+            >
+              📌
+            </button>
+          )}
         </div>
       </div>
     )
