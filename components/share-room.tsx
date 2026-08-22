@@ -892,6 +892,10 @@ export function ShareRoom() {
 
   const engineRef = useRef<RtcEngine | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+  // Stream ORIGINAL do microfone (antes do processamento de sensibilidade).
+  // Ao sair da chamada ele precisa ser parado explicitamente — desligar só a
+  // cópia processada (localStreamRef) não libera o microfone no iOS/mobile.
+  const micSourceRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
   // Limpeza da correção de orientação da câmera (parar canvas/stream).
   const orientStopRef = useRef<(() => void) | null>(null)
@@ -1314,6 +1318,17 @@ export function ShareRoom() {
   const applyMicGain = useCallback(
     (stream: MediaStream): MediaStream => {
       const audioTrack = stream.getAudioTracks()[0]
+      // Guarda o stream original do microfone para poder parar o hardware ao
+      // sair da chamada (a cópia processada não libera o mic no iOS/mobile).
+      const prevMic = micSourceRef.current
+      if (prevMic && prevMic !== stream) {
+        try {
+          prevMic.getTracks().forEach((t) => t.stop())
+        } catch {
+          /* noop */
+        }
+      }
+      micSourceRef.current = stream
       // Cria a cadeia sempre que a sensibilidade está ligada — mesmo em 1x — para
       // que o slider continue ajustando o ganho em tempo real, sem recapturar o
       // microfone a cada movimento.
@@ -1962,6 +1977,27 @@ export function ShareRoom() {
     orientStopRef.current?.()
     orientStopRef.current = null
     replaceLocalStream(null)
+    // Desliga o stream ORIGINAL do microfone (não apenas a cópia processada) e
+    // desconecta o processamento de sensibilidade. Isso libera o microfone no
+    // iOS/mobile, sem precisar recarregar a página.
+    if (micSourceRef.current) {
+      try {
+        micSourceRef.current.getTracks().forEach((t) => t.stop())
+      } catch {
+        /* noop */
+      }
+      micSourceRef.current = null
+    }
+    try {
+      if (micGainRef.current) {
+        micGainRef.current.source.disconnect()
+        micGainRef.current.gain.disconnect()
+        micGainRef.current.dest.disconnect()
+      }
+    } catch {
+      /* noop */
+    }
+    micGainRef.current = null
     setCamOn(false)
     setMicOn(false)
     setScreenStreaming(false)
