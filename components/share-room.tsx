@@ -4980,13 +4980,17 @@ export function ShareRoom() {
           const isLocal = !!tile.isLocal
           const muted = isLocal ? !micOn : tile.muted
           const portrait = !isScreen && expandedPortrait
-          // Se há câmeras fixadas, mostra todas lado a lado na tela cheia.
+          // A fileira lado a lado (com a sua câmera como principal, nº 1) só
+          // entra quando há ao menos uma câmera REMOTA fixada — ou seja, só
+          // depois de fixar alguém. Clicar em tela cheia numa câmera ainda não
+          // fixada mostra apenas ela (sem a sua).
           const pinnedTiles = pinnedIds
             .map((id) => tiles.find((t) => t.id === id))
             .filter(
               (t): t is Tile & { stream: MediaStream } => !!t && !!t.hasVideo && !!t.stream
             )
-          if (pinnedTiles.length > 0) {
+          const hasPinnedRemote = !!pinnedTiles.some((t) => !t.isLocal)
+          if (hasPinnedRemote) {
             // Ordem na fileira: 1. minha câmera (esquerda) · 2. a que expandi (meio)
             // · 3. a outra selecionada (direita). Em retrato as três têm o mesmo
             // espaço; em paisagem a do meio (a expandida) ganha mais destaque.
