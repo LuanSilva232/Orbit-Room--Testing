@@ -343,7 +343,7 @@ const STRINGS = {
     'O Orbit Room é uma plataforma de conversas ao vivo em voz e vídeo, criada para aproximar pessoas e reunir todo mundo em salas compartilhadas em tempo real — não importa a distância.\n\n#Por que o Orbit Room existe?\n\nEstamos sempre conectados, mas muitas vezes distantes. O Orbit Room nasceu para devolver ao mundo digital o calor de uma conversa cara a cara: um lugar simples em que basta entrar numa sala para se sentir junto de verdade.\n\n• Reunir pessoas ao redor de uma conversa viva, sem fricção\n• Trazer de volta a sensação de “estar na mesma sala”, de qualquer lugar\n• Tornar as conversas reais acessíveis e naturais para todos\n\nMais do que um aplicativo de chamadas, é um espaço de presença e conexão — feito para quem quer conversar, e não apenas conectar.',
     'Orbit Room is a live voice and video conversation platform, created to bring people together and gather everyone in shared rooms in real time — no matter the distance.\n\n#Why does Orbit Room exist?\n\nWe are always connected, yet often distant. Orbit Room was born to bring the warmth of a face-to-face conversation back to the digital world: a simple place where you just join a room to truly feel together.\n\n• Bring people together around a living conversation, without friction\n• Bring back the feeling of “being in the same room”, from anywhere\n• Make real conversations accessible and natural for everyone\n\nMore than a calling app, it is a space for presence and connection — made for those who want to talk, not just connect.',
   ],
-  aboutCredits: ['Criado por Noah · v0.6', 'Created by Noah · v0.6'],
+  aboutCredits: ['Criado por Noah · v0.65', 'Created by Noah · v0.65'],
 } as const
 
 // ---- Notas de atualização (changelog) ----
@@ -353,6 +353,17 @@ type ChangelogItem = {
   en: string
 }
 const CHANGELOG: { version: string; date: string; items: ChangelogItem[] }[] = [
+  {
+    version: 'v0.65',
+    date: 'Ago 2026',
+    items: [
+      { tag: 'novo', pt: 'Fixar até 3 câmeras na tela cheia, com a sua como a principal.', en: 'Pin up to 3 cameras in fullscreen, with yours as the main one.' },
+      { tag: 'novo', pt: 'Câmeras fixadas lado a lado na tela cheia, em retrato e em paisagem.', en: 'Pinned cameras shown side-by-side in fullscreen, in portrait and landscape.' },
+      { tag: 'melhoria', pt: 'Tela cheia mostra uma câmera por vez até você fixar alguém.', en: 'Fullscreen shows one camera at a time until you pin someone.' },
+      { tag: 'correcao', pt: 'Botão de fixar no lugar certo: na aba Câmeras, somente no computador.', en: 'Pin button in the right place: in the Cameras tab, desktop only.' },
+      { tag: 'melhoria', pt: 'Detecção de aparelho (celular ou computador) para controlar quem fixa câmeras.', en: 'Device detection (mobile or desktop) to control who can pin cameras.' },
+    ],
+  },
   {
     version: 'v0.6',
     date: 'Ago 2026',
@@ -4398,7 +4409,7 @@ export function ShareRoom() {
                 <div className="mb-2 flex items-center gap-2">
                   <img src="/logo.png" alt="Orbit Room" className="h-7 w-7 object-contain drop-shadow" />
                   <h4 className="text-sm font-extrabold tracking-tight">Orbit Room</h4>
-                  <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">v0.6</span>
+                  <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">v0.65</span>
                   <span className="rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-200">Ago 2026</span>
                 </div>
                 {t('aboutText')
