@@ -1165,29 +1165,53 @@ export function ShareRoom() {
     setExpandedPortrait(w > 0 && h > 0 ? w < h : false)
   }, [])
 
+  // Chave ESTÁVEL de um tile para fixar. Não depende do id interno do tile
+  // (que muda ao girar a câmera ou reconectar), então a fixação não some sozinha
+  // ao trocar da traseira pra frontal, nem trava por quem desconectou.
+  const pinKeyOf = (tile: Tile): string | null => {
+    if (!tile.hasVideo || tile.isScreen) return null
+    if (tile.isLocal) return 'local-cam'
+    if (tile.peerId) return `peer:${tile.peerId}`
+    return null
+  }
+
   // Fixa/desfixa uma câmera para a tela cheia em conjunto (até 3). A própria
-  // câmera de quem fixa entra sempre como a primeira. O modo continua ativo até
-  // desativar clicando de novo no botão da câmera fixada.
+  // câmera de quem fixa entra sempre como a primeira. Participantes que saíram
+  // saem da conta automaticamente, para não ocuparem o limite nem impedirem
+  // novas fixações quando reconectarem.
   const togglePin = useCallback(
-    (tileId: string) => {
+    (tile: Tile) => {
       setPinnedIds((prev) => {
-        if (prev.includes(tileId)) return prev.filter((id) => id !== tileId)
-        if (prev.length >= 3) {
+        const key = pinKeyOf(tile)
+        if (!key) return prev
+        // Só contam fixações que ainda são reais (tiles vivos agora mesmo).
+        const liveKeys = prev.filter((k) => {
+          if (k === 'local-cam') {
+            return camOn && !!localMediaStream?.getVideoTracks().length
+          }
+          if (k.startsWith('peer:')) {
+            const pid = k.slice('peer:'.length)
+            const peer = remotePeers[pid]
+            if (!peer) return false
+            return peer.streams.some((s) => s.getVideoTracks().length > 0)
+          }
+          return false
+        })
+        if (liveKeys.includes(key)) return liveKeys.filter((k) => k !== key)
+        if (liveKeys.length >= 3) {
           toast.info('Máximo de 3 câmeras fixadas')
-          return prev
+          return liveKeys
         }
         const selfId = 'local-cam'
-        const selfAvail = camOn && !!localMediaStream?.getVideoTracks().length
-        let next = prev
+        let next = liveKeys
         // Garante que a própria câmera fica em primeiro ao começar a fixar.
-        if (selfId !== tileId && selfAvail && !next.includes(selfId)) {
+        if (selfId !== key && !next.includes(selfId)) {
           next = [selfId, ...next].slice(0, 3)
         }
-        next = [...next, tileId].slice(0, 3)
-        return next
+        return [...next, key].slice(0, 3)
       })
     },
-    [camOn, localMediaStream]
+    [camOn, localMediaStream, remotePeers]
   )
 
   // O botão de fixar só aparece no COMPUTADOR (não na versão mobile). No desktop,
@@ -2826,13 +2850,13 @@ export function ShareRoom() {
           {pinnable(tile) && (
             <button
               title={
-                pinnedIds.includes(tile.id)
+                pinnedIds.includes(pinKeyOf(tile) ?? '')
                   ? 'Remover da fixação'
                   : 'Fixar câmera (mostra até 3 lado a lado na tela cheia)'
               }
-              onClick={() => togglePin(tile.id)}
+              onClick={() => togglePin(tile)}
               className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm text-white transition ${
-                pinnedIds.includes(tile.id)
+                pinnedIds.includes(pinKeyOf(tile) ?? '')
                   ? 'bg-emerald-500/90 hover:bg-emerald-500'
                   : 'bg-black/50 hover:bg-black/70'
               }`}
@@ -5001,7 +5025,32 @@ export function ShareRoom() {
       {expandedTileId &&
         (() => {
           const tile = tiles.find((t) => t.id === expandedTileId)
-          if (!tile || !tile.hasVideo || !tile.stream) return null
+          // Enquanto a câmera está sendo trocada (frontal/traseira), o stream
+          // fica vazio por um instante. Nesse momento a tela cheia NÃO desmonta:
+          // mostra um indicador e continua aberta até o vídeo voltar.
+          if (!tile) return null
+          if (!tile.hasVideo || !tile.stream) {
+            return (
+              <div
+                className="fixed inset-0 z-[160] flex items-center justify-center bg-black"
+                onClick={() => setExpandedTileId(null)}
+              >
+                <div className="flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                  <span className="text-sm text-slate-400">
+                    {settings.language === 'en' ? 'Loading camera…' : 'Carregando câmera…'}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setExpandedTileId(null)}
+                  title="Fechar"
+                  className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-lg bg-black/50 text-base text-white transition hover:bg-black/70"
+                >
+                  ✕
+                </button>
+              </div>
+            )
+          }
           const isScreen = !!tile.isScreen
           const isLocal = !!tile.isLocal
           const muted = isLocal ? !micOn : tile.muted
@@ -5011,7 +5060,18 @@ export function ShareRoom() {
           // depois de fixar alguém. Clicar em tela cheia numa câmera ainda não
           // fixada mostra apenas ela (sem a sua).
           const pinnedTiles = pinnedIds
-            .map((id) => tiles.find((t) => t.id === id))
+            .map((k) => {
+              if (k === 'local-cam') {
+                return tiles.find((t) => t.isLocal && !t.isScreen && t.hasVideo)
+              }
+              if (k.startsWith('peer:')) {
+                const pid = k.slice('peer:'.length)
+                return tiles.find(
+                  (t) => !t.isLocal && !t.isScreen && t.hasVideo && t.peerId === pid
+                )
+              }
+              return undefined
+            })
             .filter(
               (t): t is Tile & { stream: MediaStream } => !!t && !!t.hasVideo && !!t.stream
             )
