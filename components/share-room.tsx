@@ -1174,11 +1174,15 @@ export function ShareRoom() {
     [camOn, localMediaStream]
   )
 
-  // Uma câmera remota só pode ser fixada se o dono dela estiver no celular
-  // (a própria câmera do usuário sempre pode). Telas compartilhadas, não.
+  // O botão de fixar só aparece/funciona para quem está no DESKTOP (a opção é
+  // exclusiva de computador). E só nas câmeras dos outros participantes que estão
+  // no celular — pois na tela cheia elas vêm em pé (retrato). A própria câmera não
+  // tem botão: entra automaticamente como a principal (nº 1, à esquerda). Cada um
+  // monta o seu próprio conjunto.
   const pinnable = (tile: Tile): boolean => {
+    if (isMobileDevice) return false
+    if (tile.isLocal) return false
     if (!tile.hasVideo || tile.isScreen) return false
-    if (tile.isLocal) return true
     const member = onlineMembers.find((m) => m.clientId === tile.peerId)
     return member?.device === 'mobile'
   }
@@ -4984,6 +4988,16 @@ export function ShareRoom() {
               (t): t is Tile & { stream: MediaStream } => !!t && !!t.hasVideo && !!t.stream
             )
           if (pinnedTiles.length > 0) {
+            // Ordem na fileira: 1. minha câmera (esquerda) · 2. a que expandi (meio)
+            // · 3. a outra selecionada (direita).
+            const ownTile = pinnedTiles.find((t) => t.isLocal)
+            const remotes = pinnedTiles.filter((t) => !t.isLocal)
+            const expanded = pinnedTiles.find((t) => t.id === expandedTileId)
+            const middle = expanded && !expanded.isLocal ? expanded : remotes[0]
+            const right = remotes.find((t) => t.id !== middle?.id)
+            const row = [ownTile, middle, right].filter(
+              (t): t is Tile & { stream: MediaStream } => !!t
+            )
             return (
               <div
                 className="fixed inset-0 z-[160] flex items-center justify-center bg-black"
@@ -4993,7 +5007,7 @@ export function ShareRoom() {
                   className="flex h-full w-full items-stretch justify-center gap-2 p-2 sm:gap-4 sm:p-4"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {pinnedTiles.map((pt, i) => {
+                  {row.map((pt, i) => {
                     const pLocal = !!pt.isLocal
                     const pScreen = !!pt.isScreen
                     return (
