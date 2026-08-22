@@ -85,12 +85,15 @@ export class RtcEngine {
       const state = pc.connectionState
       if (state === 'connected') {
         this.events.onPeerConnected(id)
-      } else if (state === 'failed' || state === 'disconnected') {
-        // Deixa um timeout do próprio navegador tentar reconectar antes de remover.
-        if (state === 'failed') {
-          this.removePeer(id)
-        }
+      } else if (state === 'failed') {
+        // NÃO apaga o participante quando a conexão falha ao suspender o navegador
+        // (aba em segundo plano / Chrome minimizado): isso fazia a pessoa sumir da
+        // chamada. Em vez disso, tenta reiniciar o transporte (ICE) para recuperar
+        // o fluxo mantendo o card e o perfil no lugar.
+        setTimeout(() => this.restartIce(id), 800)
       } else if (state === 'closed') {
+        // "closed" só ocorre quando fechamos localmente (pc.close()) — aí sim
+        // removemos o participante.
         this.removePeer(id)
       }
     }
@@ -196,6 +199,25 @@ export class RtcEngine {
     }
   }
 
+  // Reinicia apenas o transporte (ICE) de uma conexão existente, sem apagar o
+  // participante nem fechar a chamada. Usado quando a aba volta do segundo plano
+  // para re-estabelecer o fluxo de mídia que o navegador suspendeu.
+  restartIce(id: string): void {
+    const peer = this.peers.get(id)
+    if (!peer) return
+    const { pc } = peer
+    if (typeof pc.restartIce !== 'function') return
+    const st = pc.connectionState
+    const ice = pc.iceConnectionState
+    if (st === 'failed' || st === 'disconnected' || ice === 'failed' || ice === 'disconnected') {
+      try {
+        pc.restartIce()
+      } catch {
+        /* noop */
+      }
+    }
+  }
+
   removePeer(id: string): void {
     const peer = this.peers.get(id)
     if (!peer) return
@@ -241,4 +263,3 @@ export class RtcEngine {
     return this.peers.size > 0
   }
 }
-

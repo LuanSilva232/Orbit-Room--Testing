@@ -967,29 +967,36 @@ export function ShareRoom() {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
         hiddenSinceRef.current = Date.now()
+        // Renova o "last_seen" antes de ficar em segundo plano, para o servidor
+        // não achar que saímos da sala enquanto a aba está suspensa.
+        registerPresence()
         return
       }
       // Ficou visível de novo.
       const awayMs = hiddenSinceRef.current ? Date.now() - hiddenSinceRef.current : 0
       hiddenSinceRef.current = null
       if (!inCallRef.current || !channelRef.current) return
-      // 1) Atualiza o "last_seen" no servidor imediatamente (o polling estava
-      //    suspenso, então o servidor podia achar que a gente saiu da sala).
       registerPresence()
       if (awayMs < 1500) return
-      // 2) Reconstrói as conexões com quem está na mesma sala (sem apagar o card).
+      // Mantém a chamada viva: reinicia o transporte (ICE) de quem já existe e
+      // recria apenas um peer que tenha sumido de verdade. Nada de apagar card
+      // nem reanunciar no servidor — a conexão continua a mesma.
       const engine = engineRef.current
-      if (!engine) return
+      const myId = clientIdRef.current
+      if (!engine || !myId) return
       const seen = new Set<string>()
       for (const m of onlineMembersRef.current) {
-        if (m.channel !== channelRef.current || m.clientId === clientIdRef.current) continue
+        if (m.channel !== channelRef.current || m.clientId === myId) continue
         seen.add(m.clientId)
-        if (engine.hasPeer(m.clientId)) engine.reconnect(m.clientId)
+        if (engine.hasPeer(m.clientId)) engine.restartIce(m.clientId)
         else engine.addPeer(m.clientId)
       }
-      // Segurança: reconecta também qualquer peer que ainda esteja na lista local.
+      // Segurança: também reinicia/recria qualquer peer ainda rastreado localmente.
       for (const pid of Object.keys(remotePeersRef.current)) {
-        if (pid !== clientIdRef.current && !seen.has(pid)) engine.reconnect(pid)
+        if (pid !== myId && !seen.has(pid)) {
+          if (engine.hasPeer(pid)) engine.restartIce(pid)
+          else engine.addPeer(pid)
+        }
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
@@ -2533,10 +2540,7 @@ export function ShareRoom() {
     const seen = new Set<string>()
     const ctx = ensureAudioCtx()
     tiles.forEach((tile) => {
-      // Não toca no microfone LOCAL via Web Audio para o anel: ler o mic ao vivo
-      // pela cadeia de áudio pode provocar "travadinha" no áudio que sai para os
-      // outros. O anel do próprio usuário acende pelo toggle do microfone (abaixo).
-      if (tile.isLocal || !tile.stream || tile.stream.getAudioTracks().length === 0) return
+      if (!tile.stream || tile.stream.getAudioTracks().length === 0) return
       seen.add(tile.stream.id)
       if (analysersRef.current.has(tile.stream.id) || !ctx) return
       try {
@@ -2577,15 +2581,6 @@ export function ShareRoom() {
         // principal da MESMA pessoa usam o MESMO stream de voz, então o anel
         // verde acende na borda do avatar do perfil também — e não só no vídeo.
         const key = tile.stream.id
-        // O anel do PRÓPRIO usuário vem do toggle do microfone (o áudio local
-        // não entra na cadeia WebAudio, para não criar "travadinha" no mic).
-        if (tile.isLocal) {
-          if (!next[key]) {
-            next[key] = true
-            changed = true
-          }
-          return
-        }
         const analyser = analysersRef.current.get(key)
         if (!analyser) return
         const buf = new Uint8Array(analyser.fftSize)
@@ -4919,5 +4914,4 @@ export function ShareRoom() {
     </div>
   )
 }
-
 
