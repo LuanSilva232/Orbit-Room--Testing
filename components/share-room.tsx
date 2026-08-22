@@ -1056,6 +1056,27 @@ export function ShareRoom() {
     return () => document.removeEventListener('visibilitychange', resumeOnVisible)
   }, [])
 
+  // Reproduz o áudio remoto mesmo se o navegador bloquear o autoplay inicial
+  // (política de autoplay): ao entrar na chamada ou ganhar novos participantes,
+  // tenta dar play algumas vezes, para o som nunca ficar mudo "à toa" com o
+  // volume ligado.
+  useEffect(() => {
+    if (!inCall) return
+    let tries = 0
+    const timer = window.setInterval(() => {
+      mediaElsRef.current.forEach((el) => {
+        try {
+          if (el.paused) void el.play().catch(() => undefined)
+        } catch {
+          /* elemento já removido do DOM */
+        }
+      })
+      tries += 1
+      if (tries >= 4) window.clearInterval(timer)
+    }, 350)
+    return () => window.clearInterval(timer)
+  }, [inCall])
+
   // Ao sair da tela cheia (desktop ou mobile/iOS), o navegador costuma pausar o
   // vídeo — o que congela o quadradinho numa imagem parada. Este ouvinte retoma
   // automaticamente a reprodução de todos os participantes assim que a tela
@@ -2512,7 +2533,10 @@ export function ShareRoom() {
     const seen = new Set<string>()
     const ctx = ensureAudioCtx()
     tiles.forEach((tile) => {
-      if (!tile.stream || tile.stream.getAudioTracks().length === 0) return
+      // Não toca no microfone LOCAL via Web Audio para o anel: ler o mic ao vivo
+      // pela cadeia de áudio pode provocar "travadinha" no áudio que sai para os
+      // outros. O anel do próprio usuário acende pelo toggle do microfone (abaixo).
+      if (tile.isLocal || !tile.stream || tile.stream.getAudioTracks().length === 0) return
       seen.add(tile.stream.id)
       if (analysersRef.current.has(tile.stream.id) || !ctx) return
       try {
@@ -2553,6 +2577,15 @@ export function ShareRoom() {
         // principal da MESMA pessoa usam o MESMO stream de voz, então o anel
         // verde acende na borda do avatar do perfil também — e não só no vídeo.
         const key = tile.stream.id
+        // O anel do PRÓPRIO usuário vem do toggle do microfone (o áudio local
+        // não entra na cadeia WebAudio, para não criar "travadinha" no mic).
+        if (tile.isLocal) {
+          if (!next[key]) {
+            next[key] = true
+            changed = true
+          }
+          return
+        }
         const analyser = analysersRef.current.get(key)
         if (!analyser) return
         const buf = new Uint8Array(analyser.fftSize)
@@ -2573,7 +2606,7 @@ export function ShareRoom() {
         speakersRef.current = next
         setSpeakers(next)
       }
-    }, 140)
+    }, 230)
     return () => window.clearInterval(timer)
   }, [tiles, micOn, mutedPeers])
 
@@ -4886,4 +4919,5 @@ export function ShareRoom() {
     </div>
   )
 }
+
 
