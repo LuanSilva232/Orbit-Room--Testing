@@ -252,6 +252,8 @@ const STRINGS = {
   idiomaDesc: ['Português ou inglês', 'Portuguese or English'],
   limpezaDesc: ['Excluir offline e restaurar padrão', 'Remove offline and reset defaults'],
   sobreDesc: ['Nome, créditos e versão', 'Name, credits and version'],
+  atualizacoes: ['Atualizações', 'Updates'],
+  atualizacoesDesc: ['Novidades e correções de cada versão', "What's new and fixes in each version"],
   avancadoDesc: ['Administrador e mais', 'Admin and more'],
   account: ['Minha conta', 'My account'],
   accountDesc: ['Entrar com o Google e gerenciar sua conta', 'Sign in with Google and manage your account'],
@@ -341,8 +343,58 @@ const STRINGS = {
     'O Orbit Room é uma plataforma de conversas ao vivo em voz e vídeo, criada para aproximar pessoas e reunir todo mundo em salas compartilhadas em tempo real — não importa a distância.\n\n#Por que o Orbit Room existe?\n\nEstamos sempre conectados, mas muitas vezes distantes. O Orbit Room nasceu para devolver ao mundo digital o calor de uma conversa cara a cara: um lugar simples em que basta entrar numa sala para se sentir junto de verdade.\n\n• Reunir pessoas ao redor de uma conversa viva, sem fricção\n• Trazer de volta a sensação de “estar na mesma sala”, de qualquer lugar\n• Tornar as conversas reais acessíveis e naturais para todos\n\nMais do que um aplicativo de chamadas, é um espaço de presença e conexão — feito para quem quer conversar, e não apenas conectar.',
     'Orbit Room is a live voice and video conversation platform, created to bring people together and gather everyone in shared rooms in real time — no matter the distance.\n\n#Why does Orbit Room exist?\n\nWe are always connected, yet often distant. Orbit Room was born to bring the warmth of a face-to-face conversation back to the digital world: a simple place where you just join a room to truly feel together.\n\n• Bring people together around a living conversation, without friction\n• Bring back the feeling of “being in the same room”, from anywhere\n• Make real conversations accessible and natural for everyone\n\nMore than a calling app, it is a space for presence and connection — made for those who want to talk, not just connect.',
   ],
-  aboutCredits: ['Criado por Noah · v0.5', 'Created by Noah · v0.5'],
+  aboutCredits: ['Criado por Noah · v0.6', 'Created by Noah · v0.6'],
 } as const
+
+// ---- Notas de atualização (changelog) ----
+type ChangelogItem = {
+  tag: 'novo' | 'correcao' | 'melhoria'
+  pt: string
+  en: string
+}
+const CHANGELOG: { version: string; date: string; items: ChangelogItem[] }[] = [
+  {
+    version: 'v0.6',
+    date: 'Ago 2026',
+    items: [
+      { tag: 'novo', pt: 'Nova página de Atualizações no menu de configurações.', en: 'New Updates page in the settings menu.' },
+      { tag: 'melhoria', pt: 'Entrar nas salas com o microfone ligado por padrão (modo silencioso continua disponível).', en: 'Join rooms with your mic on by default (silent mode is still available).' },
+      { tag: 'melhoria', pt: 'Cada versão agora mostra a data de quando foi lançada.', en: 'Each version now shows its release date.' },
+      { tag: 'correcao', pt: 'Microfone mais estável ao ligar e desligar durante a chamada.', en: 'Mic is more stable when toggled during a call.' },
+    ],
+  },
+  {
+    version: 'v0.5',
+    date: 'Ago 2026',
+    items: [
+      { tag: 'novo', pt: 'Virar a câmera entre frontal e traseira no celular.', en: 'Flip the camera between front and back on mobile.' },
+      { tag: 'novo', pt: 'Modo silencioso para entrar nas salas sem ativar o microfone.', en: 'Silent mode to join rooms without enabling your mic.' },
+      { tag: 'correcao', pt: 'Câmera não pisca mais ao ligar e desligar em sequência.', en: 'Camera no longer flickers when toggling it on and off quickly.' },
+      { tag: 'correcao', pt: 'Vídeo do outro lado sempre na posição correta, em qualquer aparelho.', en: 'Remote video is now upright on every device.' },
+      { tag: 'melhoria', pt: 'Microfone liga e desliga na hora, sem limite.', en: 'Mic toggles instantly, with no limit.' },
+    ],
+  },
+  {
+    version: 'v0.4',
+    date: 'Jul 2026',
+    items: [
+      { tag: 'novo', pt: 'Compartilhar a tela com áudio para os participantes.', en: 'Share your screen with audio to other participants.' },
+      { tag: 'novo', pt: 'Salas privadas com senha e convites.', en: 'Private rooms with password and invites.' },
+      { tag: 'melhoria', pt: 'Conversas do chat salvas por canal.', en: 'Chat messages are now saved per channel.' },
+      { tag: 'correcao', pt: 'Som com menos eco e ruído de fundo.', en: 'Less echo and background noise in calls.' },
+    ],
+  },
+  {
+    version: 'v0.3',
+    date: 'Jun 2026',
+    items: [
+      { tag: 'novo', pt: 'Entrar com a conta do Google.', en: 'Sign in with your Google account.' },
+      { tag: 'novo', pt: 'Lista de amigos e de quem está online.', en: 'Friends list and who is online.' },
+      { tag: 'novo', pt: 'Perfil com nome, foto e bio.', en: 'Profile with name, photo and bio.' },
+      { tag: 'melhoria', pt: 'Visual reformulado para celular e computador.', en: 'Fresh look for mobile and desktop.' },
+    ],
+  },
+]
 
 function formatRemaining(until: number, now: number): string {
   const total = Math.max(0, Math.floor((until - now) / 1000))
@@ -657,6 +709,7 @@ export function ShareRoom() {
     | 'idioma'
     | 'limpeza'
     | 'sobre'
+    | 'atualizacoes'
     | 'online'
     | 'amigos'
   >('menu')
@@ -2250,8 +2303,12 @@ export function ShareRoom() {
       ref={(el) => {
         tileElsRef.current[tile.id] = el
       }}
-      className={`relative overflow-hidden rounded-xl ${
-        tile.hasVideo ? 'border border-white/10 bg-black/60' : 'bg-transparent'
+      className={`relative overflow-hidden rounded-xl transition-shadow duration-200 ${
+        tile.hasVideo
+          ? speakers[tile.id]
+            ? 'border border-emerald-400 ring-2 ring-emerald-400/40 shadow-[0_0_20px_rgba(16,185,129,0.4)]'
+            : 'border border-white/10 bg-black/60'
+          : 'bg-transparent'
       } ${
         tile.isScreen
           ? 'aspect-video w-[420px] max-w-full sm:w-[520px] lg:w-[720px]'
@@ -2281,13 +2338,11 @@ export function ShareRoom() {
           <div className="flex h-full w-full flex-col items-center justify-center gap-1 p-1">
             <div className="relative">
               <div
-                className={`flex aspect-square w-16 items-center justify-center rounded-full ring-2 transition-colors ${
-                  speakers[tile.id] ? 'ring-emerald-400' : 'ring-slate-600/50'
+                className={`flex h-12 w-12 items-center justify-center overflow-hidden rounded-full transition-shadow duration-150 ${
+                  speakers[tile.id] ? 'ring-2 ring-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.55)]' : ''
                 }`}
               >
-                <div className="flex aspect-square w-16 items-center justify-center overflow-hidden rounded-full bg-white/10">
-                  <Avatar name={tile.name} photo={tile.photo} size={48} />
-                </div>
+                <Avatar name={tile.name} photo={tile.photo} size={48} />
               </div>
               {speakers[tile.id] && (
                 <span className="absolute inset-0 animate-pulse rounded-full ring-2 ring-emerald-400" />
@@ -2449,7 +2504,11 @@ export function ShareRoom() {
         ref={(el) => {
           tileElsRef.current[tile.id] = el
         }}
-        className={`relative flex-none overflow-hidden rounded-xl border border-white/10 bg-black/70 ${
+        className={`relative flex-none overflow-hidden rounded-xl border border-white/10 bg-black/70 transition-shadow duration-200 ${
+          speakers[tile.id]
+            ? 'ring-2 ring-emerald-400/50 shadow-[0_0_18px_rgba(16,185,129,0.4)]'
+            : ''
+        } ${
           square
             ? 'aspect-square w-[150px] sm:w-[170px]'
             : 'aspect-video w-[250px] sm:w-[300px] lg:w-[380px]'
@@ -2470,8 +2529,16 @@ export function ShareRoom() {
         )}
         {/* Perfil (foto + nome) no canto inferior esquerdo */}
         <div className="absolute bottom-2 left-2 flex max-w-[80%] items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1">
-          <Avatar name={tile.name} photo={tile.photo} size={22} />
+          <span className="relative flex">
+            <Avatar name={tile.name} photo={tile.photo} size={22} />
+            {speakers[tile.id] && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-emerald-400 ring-2 ring-emerald-300/80" />
+            )}
+          </span>
           <span className="truncate text-[11px] font-semibold text-slate-100">{tile.name}</span>
+          {speakers[tile.id] && (
+            <span className="text-[10px] leading-none text-emerald-300" aria-label="falando">🔊</span>
+          )}
         </div>
         {/* Controles: mudo (telas remotas) + expandir/tela cheia */}
         <div className="absolute right-2 top-2 flex gap-1.5">
@@ -3506,7 +3573,7 @@ export function ShareRoom() {
                 </button>
               )}
               <h3 className="text-base font-bold">
-                {({ menu: t('configTitle'), conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), amigos: t('amigos') } as Record<string, string>)[configPane]}
+                {({ menu: t('configTitle'), conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos') } as Record<string, string>)[configPane]}
               </h3>
             </div>
             {configPane !== 'menu' && (
@@ -3541,6 +3608,7 @@ export function ShareRoom() {
                 ['idioma', '🌐', 'bg-emerald-500/15', t('language'), t('idiomaDesc')],
                 ['limpeza', '🧹', 'bg-red-500/15', t('cleanup'), t('limpezaDesc')],
                 ['sobre', 'ℹ️', 'bg-cyan-500/15', t('about'), t('sobreDesc')],
+                ['atualizacoes', '🚀', 'bg-sky-500/15', t('atualizacoes'), t('atualizacoesDesc')],
                 ['avancado', '🛠️', 'bg-emerald-500/15', t('advanced'), t('avancadoDesc')],
               ] as const
             )
@@ -3587,6 +3655,7 @@ export function ShareRoom() {
                 ['idioma', '🌐', t('language')],
                 ['limpeza', '🧹', t('cleanup')],
                 ['sobre', 'ℹ️', t('about')],
+                ['atualizacoes', '🚀', t('atualizacoes')],
                 ['avancado', '🛠️', t('advanced')],
               ] as const
             )
@@ -3621,7 +3690,7 @@ export function ShareRoom() {
             {/* Cabeçalho desktop */}
             <div className="hidden items-center justify-between border-b border-white/10 px-5 py-3 lg:flex">
               <h3 className="text-base font-bold">
-                {({ conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), online: t('onlinePeople'), amigos: t('amigos'), menu: t('configTitle') } as Record<string, string>)[configPane]}
+                {({ conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos'), menu: t('configTitle') } as Record<string, string>)[configPane]}
               </h3>
               <button
                 onClick={() => {
@@ -4074,7 +4143,8 @@ export function ShareRoom() {
                 <div className="mb-2 flex items-center gap-2">
                   <img src="/logo.png" alt="Orbit Room" className="h-7 w-7 object-contain drop-shadow" />
                   <h4 className="text-sm font-extrabold tracking-tight">Orbit Room</h4>
-                  <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">v0.5</span>
+                  <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[10px] font-semibold text-indigo-200">v0.6</span>
+                  <span className="rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-200">Ago 2026</span>
                 </div>
                 {t('aboutText')
                   .split('\n\n')
@@ -4122,6 +4192,73 @@ export function ShareRoom() {
                   {t('aboutCredits')}
                 </p>
               </section>
+              )}
+
+              {/* Atualizações */}
+              {configPane === 'atualizacoes' && (
+                <section className="flex flex-col gap-3">
+                  <div className="share-panel-soft flex items-center gap-3 rounded-xl p-3">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 to-cyan-500/20 text-xl">
+                      🚀
+                    </span>
+                    <div>
+                      <h4 className="text-sm font-extrabold tracking-tight">
+                        {settings.language === 'en' ? 'Orbit Room updates' : 'Atualizações do Orbit Room'}
+                      </h4>
+                      <p className="text-xs text-slate-400">
+                        {settings.language === 'en'
+                          ? 'A quick summary of what changed in each version.'
+                          : 'Um resumo rápido do que mudou em cada versão.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {CHANGELOG.map((v) => (
+                    <div key={v.version} className="share-panel-soft overflow-hidden rounded-xl">
+                      <div className="flex items-center gap-2 border-b border-white/10 bg-gradient-to-r from-indigo-500/15 to-cyan-500/10 px-4 py-2.5">
+                        <span className="rounded-full bg-indigo-500 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-md shadow-indigo-500/30">
+                          {v.version}
+                        </span>
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                          {v.date}
+                        </span>
+                        <span className="ml-auto rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                          {settings.language === 'en' ? 'Release notes' : 'Nota de atualização'}
+                        </span>
+                      </div>
+                      <ul className="divide-y divide-white/5 px-4">
+                        {v.items.map((item, i) => (
+                          <li key={i} className="flex items-start gap-3 py-2.5">
+                            <span
+                              className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                item.tag === 'novo'
+                                  ? 'bg-emerald-500/15 text-emerald-300'
+                                  : item.tag === 'correcao'
+                                  ? 'bg-amber-500/15 text-amber-300'
+                                  : 'bg-sky-500/15 text-sky-300'
+                              }`}
+                            >
+                              {settings.language === 'en'
+                                ? item.tag === 'novo'
+                                  ? '✨ New'
+                                  : item.tag === 'correcao'
+                                  ? '🐛 Fix'
+                                  : '⚡ Upgrade'
+                                : item.tag === 'novo'
+                                ? '✨ Novo'
+                                : item.tag === 'correcao'
+                                ? '🐛 Correção'
+                                : '⚡ Melhoria'}
+                            </span>
+                            <span className="text-sm leading-relaxed text-slate-200">
+                              {settings.language === 'en' ? item.en : item.pt}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </section>
               )}
 
               {/* Admin */}
