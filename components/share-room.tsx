@@ -1882,8 +1882,11 @@ export function ShareRoom() {
       setChannel(channelId)
       setInCall(true)
       setMobileTab('chamadas')
-      res.data.members.forEach((m) => engineRef.current?.addPeer(m.clientId))
-      // Modo silencioso: aparece na sala sem ativar o microfone de imediato.
+      // Captura o microfone ANTES de criar as conexões com quem já está na sala.
+      // Assim o stream local (com o áudio) já está anexado quando o peer é criado,
+      // e a negociação WebRTC entrega o som dos dois lados de imediato. Se criasse
+      // os peers primeiro, os dois lados negociavam ao mesmo tempo e o navegador
+      // descartava uma das ofertas — o recém-chegado ficava mudo ou desaparecia.
       if (settings.silentMode) {
         setMicOn(false)
       } else {
@@ -1891,6 +1894,7 @@ export function ShareRoom() {
         // mudo usa o "modo silencioso" nas configurações.
         await reacquire(false)
       }
+      res.data.members.forEach((m) => engineRef.current?.addPeer(m.clientId))
       setChat([])
       seenChatRef.current = new Set()
       const hist = await apiClient.get<{ messages: ChatMessage[] }>(
@@ -5262,4 +5266,5 @@ export function ShareRoom() {
     </div>
   )
 }
+
 
