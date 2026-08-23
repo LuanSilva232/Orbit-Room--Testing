@@ -177,7 +177,7 @@ export function FriendsOnline({
                 </button>
                 <div className="min-w-0 flex-1">
                   <div className="truncate">{f.name}</div>
-                  <div className="text-[11px] text-slate-500">offline há {fmtAgo(f.lastSeen) ?? '—'}</div>
+                  {f.lastSeen && <div className="text-[11px] text-slate-500">offline há {fmtAgo(f.lastSeen)}</div>}
                 </div>
                 <button
                   onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}

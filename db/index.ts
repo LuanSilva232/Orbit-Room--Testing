@@ -159,6 +159,18 @@ export function ensureDb(): Promise<void> {
           ADD COLUMN IF NOT EXISTS friend_code text
       `
       await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS privacy_show_online boolean NOT NULL DEFAULT true
+      `
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS privacy_show_lastseen boolean NOT NULL DEFAULT true
+      `
+      await sql`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS privacy_show_room boolean NOT NULL DEFAULT true
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS social_requests (
           id         text PRIMARY KEY,
           from_id    text NOT NULL,

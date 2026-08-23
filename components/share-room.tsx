@@ -257,6 +257,29 @@ const STRINGS = {
   avancadoDesc: ['Administrador e mais', 'Admin and more'],
   account: ['Minha conta', 'My account'],
   accountDesc: ['Entrar com o Google e gerenciar sua conta', 'Sign in with Google and manage your account'],
+  privacy: ['Privacidade', 'Privacy'],
+  privacidadeDesc: ['O que os outros veem de você', 'What others see about you'],
+  privacyShowOnline: ['Mostrar "online agora"', 'Show "online now"'],
+  privacyShowOnlineDesc: [
+    'Deixa seus amigos verem quando você está online',
+    'Let friends see when you are online',
+  ],
+  privacyShowLastseen: ['Permitir "visto por último"', 'Allow "last seen"'],
+  privacyShowLastseenDesc: [
+    'Deixa seus amigos verem seu último acesso',
+    'Let friends see your last access',
+  ],
+  privacyShowRoom: ['Mostrar a sala em que estou', 'Show the room you are in'],
+  privacyShowRoomDesc: [
+    'Deixa seus amigos verem o nome da sala',
+    'Let friends see the room name',
+  ],
+  privacyLocked: [
+    'Entre com o Google para controlar sua privacidade.',
+    'Sign in with Google to control your privacy.',
+  ],
+  privacyOn: ['Visível', 'Visible'],
+  privacyOff: ['Oculto', 'Hidden'],
   accountInfo: ['Suas informações da conta Google', 'Your Google account info'],
   accountEditHint: ['Para editar nome, foto e fundo, vá em Meu Perfil.', 'To edit name, photo and background, go to My Profile.'],
   revealEmail: ['Revelar e-mail', 'Reveal email'],
@@ -719,6 +742,7 @@ export function ShareRoom() {
     | 'menu'
     | 'conta'
     | 'perfil'
+    | 'privacidade'
     | 'avancado'
     | 'audio'
     | 'aparencia'
@@ -793,6 +817,40 @@ export function ShareRoom() {
       return next
     })
   }, [])
+
+  // ----- Privacidade (persistida no servidor, pois controla o que os outros veem) -----
+  const [privacy, setPrivacy] = useState<{
+    showOnline: boolean
+    showLastseen: boolean
+    showRoom: boolean
+  }>({ showOnline: true, showLastseen: true, showRoom: true })
+  const [privacyLoaded, setPrivacyLoaded] = useState(false)
+
+  useEffect(() => {
+    if (!authUser) return
+    fetch('/api/profile')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.profile?.privacy) setPrivacy(d.profile.privacy)
+      })
+      .catch(() => {})
+      .finally(() => setPrivacyLoaded(true))
+  }, [authUser])
+
+  const setPrivacyFlag = useCallback(
+    (key: 'showOnline' | 'showLastseen' | 'showRoom', v: boolean) => {
+      setPrivacy((prev) => {
+        const next = { ...prev, [key]: v }
+        fetch('/api/profile', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ privacy: next }),
+        }).catch(() => {})
+        return next
+      })
+    },
+    []
+  )
 
   // Ativa o tema claro também no fundo da página inteira (body).
   useEffect(() => {
@@ -3989,7 +4047,7 @@ export function ShareRoom() {
                 </button>
               )}
               <h3 className="text-base font-bold">
-                {({ menu: t('configTitle'), conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos') } as Record<string, string>)[configPane]}
+                {({ menu: t('configTitle'), conta: t('account'), privacidade: t('privacy'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos') } as Record<string, string>)[configPane]}
               </h3>
             </div>
             {configPane !== 'menu' && (
@@ -4014,6 +4072,7 @@ export function ShareRoom() {
             {(
               [
                 ['conta', '🔑', 'bg-indigo-500/20', t('account'), t('accountDesc')],
+                ['privacidade', '🔒', 'bg-rose-500/15', t('privacy'), t('privacidadeDesc')],
                 ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
                 ['amigos', '🤝', 'bg-emerald-500/15', t('amigos'), t('amigosDesc')],
                 ['online', '👥', 'bg-emerald-500/15', t('onlinePeople'), t('onlinePeopleDesc')],
@@ -4061,6 +4120,7 @@ export function ShareRoom() {
             {(
               [
                 ['conta', '🔑', t('account')],
+                ['privacidade', '🔒', t('privacy')],
                 ['perfil', '👤', t('profile')],
                 ['amigos', '🤝', t('amigos')],
                 ['online', '👥', t('onlinePeople')],
@@ -4106,7 +4166,7 @@ export function ShareRoom() {
             {/* Cabeçalho desktop */}
             <div className="hidden items-center justify-between border-b border-white/10 px-5 py-3 lg:flex">
               <h3 className="text-base font-bold">
-                {({ conta: t('account'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos'), menu: t('configTitle') } as Record<string, string>)[configPane]}
+                {({ conta: t('account'), privacidade: t('privacy'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos'), menu: t('configTitle') } as Record<string, string>)[configPane]}
               </h3>
               <button
                 onClick={() => {
@@ -4368,6 +4428,70 @@ export function ShareRoom() {
                     </a>
                   </section>
                 )
+              )}
+
+              {/* Privacidade */}
+              {configPane === 'privacidade' && (
+                <section className="share-panel-soft flex flex-col gap-4 rounded-xl p-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/15 text-xl">
+                      🔒
+                    </span>
+                    <div>
+                      <div className="text-sm font-semibold">{t('privacy')}</div>
+                      <div className="text-xs text-slate-400">{t('privacidadeDesc')}</div>
+                    </div>
+                  </div>
+
+                  {authUser ? (
+                    privacyLoaded ? (
+                      <>
+                        <SwitchRow
+                          checked={privacy.showOnline}
+                          onChecked={(v) => setPrivacyFlag('showOnline', v)}
+                          title={`🟢 ${t('privacyShowOnline')}`}
+                          desc={`${t('privacyShowOnlineDesc')} · ${
+                            privacy.showOnline ? t('privacyOn') : t('privacyOff')
+                          }`}
+                        />
+                        <SwitchRow
+                          checked={privacy.showLastseen}
+                          onChecked={(v) => setPrivacyFlag('showLastseen', v)}
+                          title={`🕒 ${t('privacyShowLastseen')}`}
+                          desc={`${t('privacyShowLastseenDesc')} · ${
+                            privacy.showLastseen ? t('privacyOn') : t('privacyOff')
+                          }`}
+                        />
+                        <SwitchRow
+                          checked={privacy.showRoom}
+                          onChecked={(v) => setPrivacyFlag('showRoom', v)}
+                          title={`📍 ${t('privacyShowRoom')}`}
+                          desc={`${t('privacyShowRoomDesc')} · ${
+                            privacy.showRoom ? t('privacyOn') : t('privacyOff')
+                          }`}
+                        />
+                        <p className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs leading-relaxed text-slate-400">
+                          💡 {settings.language === 'en'
+                            ? 'Turn an option off to hide that info from your friends and your profile.'
+                            : 'Desative uma opção para esconder essa informação dos seus amigos e do seu perfil.'}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-slate-400">Carregando...</p>
+                    )
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-6 text-center">
+                      <div className="text-3xl">🔒</div>
+                      <p className="text-xs text-slate-400">{t('privacyLocked')}</p>
+                      <a
+                        href="/login"
+                        className="mt-1 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110"
+                      >
+                        <span className="text-lg leading-none">🌐</span> {t('signInGoogle')}
+                      </a>
+                    </div>
+                  )}
+                </section>
               )}
 
               {/* Áudio e vídeo */}

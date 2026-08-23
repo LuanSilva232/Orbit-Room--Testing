@@ -15,11 +15,15 @@ type UserRow = {
   photo: string | null
   cover: string | null
   friend_code: string | null
+  privacy_show_online: boolean | null
+  privacy_show_lastseen: boolean | null
+  privacy_show_room: boolean | null
 }
 
 async function userById(id: string): Promise<UserRow | undefined> {
   const rows = await getSql()<UserRow[]>`
-    SELECT id, email, display_name, bio, photo, cover, friend_code
+    SELECT id, email, display_name, bio, photo, cover, friend_code,
+           privacy_show_online, privacy_show_lastseen, privacy_show_room
     FROM users WHERE id = ${id} AND status = 'active'
   `
   return rows[0]
@@ -38,11 +42,13 @@ async function friendRows(meId: string): Promise<UserRow[]> {
   // A amizade é gravada nas duas direções ((me,X) e (X,me)). Para cada amigo há
   // portanto DOIS registros; o GROUP BY deduplica para o amigo aparecer só uma vez.
   return getSql()<UserRow[]>`
-    SELECT u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.friend_code
+    SELECT u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.friend_code,
+           u.privacy_show_online, u.privacy_show_lastseen, u.privacy_show_room
     FROM social_friends sf
     JOIN users u ON u.id = CASE WHEN sf.user_a = ${meId} THEN sf.user_b ELSE sf.user_a END
     WHERE (sf.user_a = ${meId} OR sf.user_b = ${meId}) AND u.status = 'active'
-    GROUP BY u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.friend_code
+    GROUP BY u.id, u.email, u.display_name, u.bio, u.photo, u.cover, u.friend_code,
+             u.privacy_show_online, u.privacy_show_lastseen, u.privacy_show_room
   `
 }
 
@@ -203,7 +209,10 @@ export async function getSocialOverview(meId: string): Promise<SocialOverview> {
       followingCount: following.length,
     },
     friends: friends.map((f) => {
-      const p = online.get(f.id)
+      const showOnline = f.privacy_show_online ?? true
+      const showLastseen = f.privacy_show_lastseen ?? true
+      const showRoom = f.privacy_show_room ?? true
+      const p = showOnline ? online.get(f.id) : undefined
       return {
         id: f.id,
         name: f.display_name,
@@ -212,9 +221,9 @@ export async function getSocialOverview(meId: string): Promise<SocialOverview> {
         bio: f.bio,
         code: f.friend_code,
         online: Boolean(p),
-        channelId: p?.channel ?? null,
+        channelId: showRoom && p ? p.channel : null,
         onlineSince: p?.onlineSince ?? null,
-        lastSeen: lastSeen.get(f.id) ?? null,
+        lastSeen: showLastseen ? lastSeen.get(f.id) ?? null : null,
       }
     }),
     requests,
@@ -238,7 +247,7 @@ export type TargetSocial = {
 }
 
 export async function getTargetSocial(meId: string, targetId: string): Promise<TargetSocial> {
-  await requireUser(targetId) // valida que o usuário existe
+  const target = await requireUser(targetId) // valida que o usuário existe
   const isSelf = meId === targetId
 
   const [[friendRel], [followRel], [sentRel], [receivedRel], friends, followers, following] =
@@ -254,6 +263,7 @@ export async function getTargetSocial(meId: string, targetId: string): Promise<T
     ])
 
   const isFriend = Boolean(friendRel) || isSelf
+  const showOnline = target.privacy_show_online ?? true
   const onlineMap = await onlineChannels([targetId])
   const canSeeLists = isSelf || isFriend
   const onlineFriendIds = canSeeLists ? friends.map((f) => f.id) : []
@@ -270,7 +280,7 @@ export async function getTargetSocial(meId: string, targetId: string): Promise<T
           id: f.id,
           name: f.display_name,
           photo: f.photo,
-          online: onlineFriends.has(f.id),
+          online: (f.privacy_show_online ?? true) && onlineFriends.has(f.id),
         }))
       : [],
     followers: canSeeLists
@@ -279,7 +289,7 @@ export async function getTargetSocial(meId: string, targetId: string): Promise<T
     following: canSeeLists
       ? following.map((f) => ({ id: f.id, name: f.display_name, photo: f.photo }))
       : [],
-    user: { online: onlineMap.has(targetId) },
+    user: { online: showOnline && onlineMap.has(targetId) },
   }
 }
 
