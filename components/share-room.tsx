@@ -4071,44 +4071,71 @@ export function ShareRoom() {
           >
             {(
               [
-                ['conta', '🔑', 'bg-indigo-500/20', t('account'), t('accountDesc')],
-                ['privacidade', '🔒', 'bg-rose-500/15', t('privacy'), t('privacidadeDesc')],
-                ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
-                ['amigos', '🤝', 'bg-emerald-500/15', t('amigos'), t('amigosDesc')],
-                ['online', '👥', 'bg-emerald-500/15', t('onlinePeople'), t('onlinePeopleDesc')],
-                ['audio', '🎙️', 'bg-sky-500/15', t('audioVideo'), t('audioDesc')],
-                ['aparencia', '🎨', 'bg-fuchsia-500/15', t('appearance'), t('aparenciaDesc')],
-                ['notificacoes', '🔔', 'bg-amber-500/15', t('notifications'), t('notificacoesDesc')],
-                ['silencioso', '🤫', 'bg-slate-500/15', t('silentMode'), t('silenciosoDesc')],
-                ['idioma', '🌐', 'bg-emerald-500/15', t('language'), t('idiomaDesc')],
-                ['limpeza', '🧹', 'bg-red-500/15', t('cleanup'), t('limpezaDesc')],
-                ['sobre', 'ℹ️', 'bg-cyan-500/15', t('about'), t('sobreDesc')],
-                ['atualizacoes', '🚀', 'bg-sky-500/15', t('atualizacoes'), t('atualizacoesDesc')],
-                ['avancado', '🛠️', 'bg-emerald-500/15', t('advanced'), t('avancadoDesc')],
+                {
+                  title: '👤 Conta & Amigos',
+                  items: [
+                    ['conta', '🔑', 'bg-indigo-500/20', t('account'), t('accountDesc')],
+                    ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
+                    ['amigos', '🤝', 'bg-emerald-500/15', t('amigos'), t('amigosDesc')],
+                    ['online', '👥', 'bg-emerald-500/15', t('onlinePeople'), t('onlinePeopleDesc')],
+                    ['privacidade', '🔒', 'bg-rose-500/15', t('privacy'), t('privacidadeDesc')],
+                  ],
+                },
+                {
+                  title: '🎙️ Áudio & Vídeo',
+                  items: [
+                    ['audio', '🎙️', 'bg-sky-500/15', t('audioVideo'), t('audioDesc')],
+                  ],
+                },
+                {
+                  title: '🎨 Aparência & Comportamento',
+                  items: [
+                    ['aparencia', '🎨', 'bg-fuchsia-500/15', t('appearance'), t('aparenciaDesc')],
+                    ['idioma', '🌐', 'bg-emerald-500/15', t('language'), t('idiomaDesc')],
+                    ['notificacoes', '🔔', 'bg-amber-500/15', t('notifications'), t('notificacoesDesc')],
+                    ['silencioso', '🤫', 'bg-slate-500/15', t('silentMode'), t('silenciosoDesc')],
+                  ],
+                },
+                {
+                  title: '⚙️ Sistema',
+                  items: [
+                    ['limpeza', '🧹', 'bg-red-500/15', t('cleanup'), t('limpezaDesc')],
+                    ['avancado', '🛠️', 'bg-emerald-500/15', t('advanced'), t('avancadoDesc')],
+                    ['atualizacoes', '🚀', 'bg-sky-500/15', t('atualizacoes'), t('atualizacoesDesc')],
+                    ['sobre', 'ℹ️', 'bg-cyan-500/15', t('about'), t('sobreDesc')],
+                  ],
+                },
               ] as const
-            )
-              .filter(([id]) => isAdmin || id !== 'limpeza')
-              .map(([id, icon, bg, label, desc]) => (
-              <button
-                key={id}
-                onClick={() => setConfigPane(id)}
-                className="share-panel-soft relative flex items-center gap-3 rounded-xl p-4 text-left transition-colors duration-100 hover:bg-white/5"
-              >
-                <span
-                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg} text-xl`}
-                >
-                  {icon}
-                </span>
-                <span>
-                  <span className="block text-sm font-semibold">{label}</span>
-                  <span className="block text-xs text-slate-200">{desc}</span>
-                </span>
-                {id === 'amigos' && pendingCount > 0 && (
-                  <span className="absolute right-3 top-3 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white shadow-lg shadow-rose-500/40">
-                    {pendingCount > 9 ? '+9' : pendingCount}
-                  </span>
-                )}
-              </button>
+            ).map((group) => (
+              <div key={group.title} className="flex flex-col gap-2">
+                <div className="mt-1 px-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  {group.title}
+                </div>
+                {group.items
+                  .filter(([id]) => isAdmin || id !== 'limpeza')
+                  .map(([id, icon, bg, label, desc]) => (
+                  <button
+                    key={id}
+                    onClick={() => setConfigPane(id)}
+                    className="share-panel-soft relative flex items-center gap-3 rounded-xl p-4 text-left transition-colors duration-100 hover:bg-white/5"
+                  >
+                    <span
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg} text-xl`}
+                    >
+                      {icon}
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold">{label}</span>
+                      <span className="block text-xs text-slate-200">{desc}</span>
+                    </span>
+                    {id === 'amigos' && pendingCount > 0 && (
+                      <span className="absolute right-3 top-3 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white shadow-lg shadow-rose-500/40">
+                        {pendingCount > 9 ? '+9' : pendingCount}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
 
@@ -4119,41 +4146,66 @@ export function ShareRoom() {
             </div>
             {(
               [
-                ['conta', '🔑', t('account')],
-                ['privacidade', '🔒', t('privacy')],
-                ['perfil', '👤', t('profile')],
-                ['amigos', '🤝', t('amigos')],
-                ['online', '👥', t('onlinePeople')],
-                ['audio', '🎙️', t('audioVideo')],
-                ['aparencia', '🎨', t('appearance')],
-                ['notificacoes', '🔔', t('notifications')],
-                ['silencioso', '🤫', t('silentMode')],
-                ['idioma', '🌐', t('language')],
-                ['limpeza', '🧹', t('cleanup')],
-                ['sobre', 'ℹ️', t('about')],
-                ['atualizacoes', '🚀', t('atualizacoes')],
-                ['avancado', '🛠️', t('advanced')],
+                {
+                  title: '👤 Conta & Amigos',
+                  items: [
+                    ['conta', '🔑', t('account')],
+                    ['perfil', '👤', t('profile')],
+                    ['amigos', '🤝', t('amigos')],
+                    ['online', '👥', t('onlinePeople')],
+                    ['privacidade', '🔒', t('privacy')],
+                  ],
+                },
+                {
+                  title: '🎙️ Áudio & Vídeo',
+                  items: [['audio', '🎙️', t('audioVideo')]],
+                },
+                {
+                  title: '🎨 Aparência & Comportamento',
+                  items: [
+                    ['aparencia', '🎨', t('appearance')],
+                    ['idioma', '🌐', t('language')],
+                    ['notificacoes', '🔔', t('notifications')],
+                    ['silencioso', '🤫', t('silentMode')],
+                  ],
+                },
+                {
+                  title: '⚙️ Sistema',
+                  items: [
+                    ['limpeza', '🧹', t('cleanup')],
+                    ['avancado', '🛠️', t('advanced')],
+                    ['atualizacoes', '🚀', t('atualizacoes')],
+                    ['sobre', 'ℹ️', t('about')],
+                  ],
+                },
               ] as const
-            )
-              .filter(([id]) => isAdmin || id !== 'limpeza')
-              .map(([id, icon, label]) => (
-              <button
-                key={id}
-                onClick={() => setConfigPane(id)}
-                className={`relative flex items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm font-semibold transition-colors duration-100 ${
-                  configPane === id
-                    ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/30'
-                    : 'text-slate-300 hover:bg-white/5'
-                }`}
-              >
-                <span className="w-6 text-center text-base leading-none">{icon}</span>
-                {label}
-                {id === 'amigos' && pendingCount > 0 && (
-                  <span className="absolute right-2 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-lg shadow-rose-500/40">
-                    {pendingCount > 9 ? '+9' : pendingCount}
-                  </span>
-                )}
-              </button>
+            ).map((group) => (
+              <div key={group.title} className="flex flex-col gap-1">
+                <div className="mb-0.5 px-2 pb-0.5 pt-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  {group.title}
+                </div>
+                {group.items
+                  .filter(([id]) => isAdmin || id !== 'limpeza')
+                  .map(([id, icon, label]) => (
+                  <button
+                    key={id}
+                    onClick={() => setConfigPane(id)}
+                    className={`relative flex items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm font-semibold transition-colors duration-100 ${
+                      configPane === id
+                        ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/30'
+                        : 'text-slate-300 hover:bg-white/5'
+                    }`}
+                  >
+                    <span className="w-6 text-center text-base leading-none">{icon}</span>
+                    {label}
+                    {id === 'amigos' && pendingCount > 0 && (
+                      <span className="absolute right-2 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-lg shadow-rose-500/40">
+                        {pendingCount > 9 ? '+9' : pendingCount}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
 
