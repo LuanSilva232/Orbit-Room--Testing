@@ -25,6 +25,7 @@ import { AnonProfileModal, Avatar, ProfileEditModal } from './modals'
 import { ProfileViewModal } from './profile-popup'
 import { FriendsPanel } from './friends-panel'
 import { FriendsOnline } from './friends-online'
+import { SocialChat } from './social-chat'
 
 const OFFLINE_MS = 15 * 60 * 1000 // 15min sem atividade = offline ("fantasma")
 
@@ -91,6 +92,72 @@ function InviteAlert({
           <button
             onClick={onGo}
             className="rounded-lg bg-emerald-500 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-600 active:scale-95"
+          >
+            Ir
+          </button>
+          <button
+            onClick={dismiss}
+            className="rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-slate-300 ring-1 ring-white/10 transition hover:bg-white/20 active:scale-95"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Aviso de nova mensagem no bate-papo social: card pequeno e bonito no topo da
+// tela, com cronômetro de 7s e botões "Ir" (abre o bate-papo) e "Fechar".
+function MessageAlert({
+  fromName,
+  fromPhoto,
+  text,
+  onGo,
+  dismiss,
+}: {
+  fromName: string
+  fromPhoto: string | null
+  text: string
+  onGo: () => void
+  dismiss: () => void
+}) {
+  const [left, setLeft] = useState(INVITE_ALERT_SECONDS)
+  const dismissRef = useRef(dismiss)
+  dismissRef.current = dismiss
+
+  useEffect(() => {
+    if (left <= 0) {
+      dismissRef.current()
+      return
+    }
+    const t = setTimeout(() => setLeft((v) => v - 1), 1000)
+    return () => clearTimeout(t)
+  }, [left])
+
+  return (
+    <div className="pointer-events-auto w-[21rem] overflow-hidden rounded-2xl border border-white/10 bg-slate-900/90 p-3 shadow-2xl shadow-black/50 backdrop-blur">
+      <div className="flex items-start gap-2.5">
+        {fromPhoto ? (
+          <img src={fromPhoto} alt={fromName} className="mt-0.5 h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-white/10" />
+        ) : (
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fuchsia-500/30 text-sm font-bold text-fuchsia-200 ring-2 ring-white/10">
+            {fromName.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-bold text-white">{fromName}</p>
+          <p className="truncate text-xs text-slate-400">
+            <span className="text-fuchsia-300">💬</span> {text}
+          </p>
+        </div>
+      </div>
+      <div className="mt-2.5 flex items-center justify-between border-t border-white/5 pt-2.5">
+        <span className="text-xs font-semibold tabular-nums text-slate-400">{left}s</span>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={onGo}
+            className="rounded-lg bg-fuchsia-500 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-fuchsia-400 active:scale-95"
           >
             Ir
           </button>
@@ -253,6 +320,19 @@ const STRINGS = {
   friendsOnline: ['Amigos online', 'Friends online'],
   amigos: ['Convites', 'Invites'],
   amigosDesc: ['Enviar/aceitar convites e copiar seu código', 'Send/accept invites and copy your code'],
+  batepapo: ['Bate-papo', 'Chat'],
+  batepapoDesc: ['Conversas sociais com seus amigos', 'Social chats with your friends'],
+  chatChooseHint: [
+    'Escolha uma das pastinhas abaixo: 🎙️ canais de voz para conversar por voz/texto nos canais, ou 💬 bate-papo social para conversar em particular com seus amigos.',
+    'Choose one of the tabs below: 🎙️ voice channels to talk by voice/text in channels, or 💬 social chat to talk privately with your friends.',
+  ],
+  channelsVoice: ['Canais de voz', 'Voice channels'],
+  socialFriends: ['Social (amigos)', 'Social (friends)'],
+  socialLocked: ['Bate-papo social', 'Social chat'],
+  socialLockedHint: [
+    'Para conversar em particular com seus amigos, entre com sua conta Google.',
+    'To chat privately with your friends, sign in with your Google account.',
+  ],
   amigosLocked: ['Login com Google obrigatório', 'Google sign-in required'],
   amigosLockedHint: [
     'Para gerenciar amigos e convites, entre com sua conta Google.',
@@ -695,6 +775,21 @@ export function ShareRoom() {
   const closeInviteAlert = useCallback((id: string) => {
     setInviteAlerts((alerts) => alerts.filter((a) => a.id !== id))
   }, [])
+  // Avisos de nova mensagem no bate-papo social (cards no topo da tela).
+  const [messageAlerts, setMessageAlerts] = useState<{ id: string; fromName: string; fromPhoto: string | null; text: string }[]>([])
+  const closeMessageAlert = useCallback((id: string) => {
+    setMessageAlerts((alerts) => alerts.filter((a) => a.id !== id))
+  }, [])
+  // Sinal para o Bate-papo social abrir a aba "Social" (ex.: ao tocar "Ir").
+  const [socialFocus, setSocialFocus] = useState(0)
+  // Aba ativa dentro do Chat: canais de voz ou bate-papo social.
+  const [chatTab, setChatTab] = useState<'canais' | 'social'>('canais')
+  const openSocialChat = useCallback(() => {
+    setConfigOpen(false)
+    setMobileTab('chat')
+    setChatTab('social')
+    setSocialFocus((c) => c + 1)
+  }, [])
   const [newRoomName, setNewRoomName] = useState('')
   const [newRoomPrivate, setNewRoomPrivate] = useState(false)
   const [newRoomPassword, setNewRoomPassword] = useState('')
@@ -762,6 +857,37 @@ export function ShareRoom() {
     const id = setInterval(() => void loadRooms(), 8000)
     return () => clearInterval(id)
   }, [loadRooms])
+
+  // Polling das notificações do bate-papo social: quando chega "mandou
+  // mensagem", mostra o aviso no topo da tela com o botão "Ir" para o bate-papo.
+  const seenNotifRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!authUser) return
+    const check = () => {
+      apiClient
+        .get<{ requests: unknown[]; notifications: { id: string; fromName: string; fromPhoto: string | null; text: string }[] }>(
+          '/api/social-chat?action=requests'
+        )
+        .then((res) => {
+          if (!res.success) return
+          for (const n of res.data.notifications) {
+            if (seenNotifRef.current.has(n.id)) continue
+            seenNotifRef.current.add(n.id)
+            // Aviso apenas para novas mensagens (recusas ficam na caixinha 🔔).
+            if (!n.text.includes('recusou')) {
+              setMessageAlerts((alerts) => [
+                ...alerts.slice(-2),
+                { id: n.id, fromName: n.fromName, fromPhoto: n.fromPhoto, text: n.text },
+              ])
+            }
+          }
+        })
+        .catch(() => {})
+    }
+    check()
+    const id = setInterval(check, 5000)
+    return () => clearInterval(id)
+  }, [authUser])
 
   const createRoom = useCallback(async () => {
     const name = newRoomName.trim()
@@ -854,6 +980,7 @@ export function ShareRoom() {
     | 'atualizacoes'
     | 'online'
     | 'amigos'
+    | 'batepapo'
   >('menu')
 
   // ----- Preferências globais (persistidas no navegador) -----
@@ -3199,8 +3326,21 @@ export function ShareRoom() {
     >
       <Toaster position="top-center" theme="dark" />
 
-      {/* Avisos de convite de sala — cards pequenos centralizados no topo */}
+      {/* Avisos de convite de sala e de nova mensagem — cards pequenos centralizados no topo */}
       <div className="pointer-events-none fixed inset-x-0 top-4 z-[9999] flex flex-col items-center gap-2 px-4">
+        {messageAlerts.map((alert) => (
+          <MessageAlert
+            key={alert.id}
+            fromName={alert.fromName}
+            fromPhoto={alert.fromPhoto}
+            text={alert.text}
+            onGo={() => {
+              closeMessageAlert(alert.id)
+              openSocialChat()
+            }}
+            dismiss={() => closeMessageAlert(alert.id)}
+          />
+        ))}
         {inviteAlerts.map((alert) => (
           <InviteAlert
             key={alert.id}
@@ -3870,6 +4010,35 @@ export function ShareRoom() {
           mobileTab === 'chat' ? 'flex' : 'hidden'
         } ${inicioView === 'home' ? 'lg:hidden' : 'lg:flex'}`}
       >
+        {/* Aviso superior: pede para escolher uma das pastinhas */}
+        <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500/10 to-fuchsia-500/10 px-3 py-2 text-xs text-slate-300 ring-1 ring-white/5">
+          <span className="text-base">💬</span>
+          <span>{t('chatChooseHint')}</span>
+        </div>
+
+        {/* Pastinhas: canais de voz (esquerda) | bate-papo social (direita) */}
+        <div className="mb-2 flex shrink-0 gap-1">
+          <button
+            onClick={() => setChatTab('canais')}
+            className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-xs font-semibold transition ${
+              chatTab === 'canais' ? 'bg-indigo-500/25 text-indigo-200 ring-1 ring-indigo-400/30' : 'text-slate-400 hover:bg-white/5'
+            }`}
+          >
+            <span className="text-lg">🎙️</span> {t('channelsVoice')}
+          </button>
+          <button
+            onClick={() => setChatTab('social')}
+            className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-xs font-semibold transition ${
+              chatTab === 'social' ? 'bg-fuchsia-500/25 text-fuchsia-200 ring-1 ring-fuchsia-400/30' : 'text-slate-400 hover:bg-white/5'
+            }`}
+          >
+            <span className="text-lg">💬</span> {t('socialFriends')}
+            {!authUser && <span className="absolute right-2 top-1 text-xs">🔒</span>}
+          </button>
+        </div>
+
+        {chatTab === 'canais' ? (
+          <>
         {!inCall ? (
           <div className="flex flex-1 flex-col items-center justify-center text-center">
             <div className="text-5xl">💬</div>
@@ -4073,6 +4242,32 @@ export function ShareRoom() {
             </form>
           </>
         )}
+          </>
+        ) : chatTab === 'social' ? (
+          authUser ? (
+            <SocialChat
+              me={{ id: authUser.id, name: profile.name }}
+              onOpenProfile={(p) =>
+                setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined })
+              }
+              focusSignal={socialFocus}
+            />
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 text-3xl">
+                💬
+              </div>
+              <div className="text-sm font-semibold">{t('socialLocked')}</div>
+              <p className="max-w-xs text-xs text-slate-400">{t('socialLockedHint')}</p>
+              <a
+                href="/login"
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110"
+              >
+                <span className="text-lg leading-none">🌐</span> {t('signInGoogle')}
+              </a>
+            </div>
+          )
+        ) : null}
       </aside>
 
       {/* Modais */}
@@ -4165,7 +4360,7 @@ export function ShareRoom() {
                 </button>
               )}
               <h3 className="text-base font-bold">
-                {({ menu: t('configTitle'), conta: t('account'), privacidade: t('privacy'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos') } as Record<string, string>)[configPane]}
+                {({ menu: t('configTitle'), conta: t('account'), privacidade: t('privacy'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos'), batepapo: t('batepapo') } as Record<string, string>)[configPane]}
               </h3>
             </div>
             {configPane !== 'menu' && (
@@ -4196,6 +4391,7 @@ export function ShareRoom() {
                     ['perfil', '👤', 'bg-indigo-500/20', t('profile'), t('perfilDesc')],
                     ['amigos', '🤝', 'bg-emerald-500/15', t('amigos'), t('amigosDesc')],
                     ['online', '👥', 'bg-emerald-500/15', t('onlinePeople'), t('onlinePeopleDesc')],
+                    ['batepapo', '💬', 'bg-fuchsia-500/15', t('batepapo'), t('batepapoDesc')],
                     ['privacidade', '🔒', 'bg-rose-500/15', t('privacy'), t('privacidadeDesc')],
                   ],
                 },
@@ -4271,6 +4467,7 @@ export function ShareRoom() {
                     ['perfil', '👤', t('profile')],
                     ['amigos', '🤝', t('amigos')],
                     ['online', '👥', t('onlinePeople')],
+                    ['batepapo', '💬', t('batepapo')],
                     ['privacidade', '🔒', t('privacy')],
                   ],
                 },
@@ -4336,7 +4533,7 @@ export function ShareRoom() {
             {/* Cabeçalho desktop */}
             <div className="hidden items-center justify-between border-b border-white/10 px-5 py-3 lg:flex">
               <h3 className="text-base font-bold">
-                {({ conta: t('account'), privacidade: t('privacy'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos'), menu: t('configTitle') } as Record<string, string>)[configPane]}
+                {({ conta: t('account'), privacidade: t('privacy'), perfil: t('profile'), avancado: t('advanced'), audio: t('audioVideo'), aparencia: t('appearance'), notificacoes: t('notifications'), silencioso: t('silentMode'), idioma: t('language'), limpeza: t('cleanup'), sobre: t('about'), atualizacoes: t('atualizacoes'), online: t('onlinePeople'), amigos: t('amigos'), batepapo: t('batepapo'), menu: t('configTitle') } as Record<string, string>)[configPane]}
               </h3>
               <button
                 onClick={() => {
@@ -4566,6 +4763,35 @@ export function ShareRoom() {
                     }
                   />
                 </section>
+              )}
+
+              {/* Bate-papo social entre amigos */}
+              {configPane === 'batepapo' && (
+                authUser ? (
+                  <section className="flex h-full flex-col">
+                    <SocialChat
+                      me={{ id: authUser.id, name: profile.name }}
+                      onOpenProfile={(p) =>
+                        setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined })
+                      }
+                      focusSignal={socialFocus}
+                    />
+                  </section>
+                ) : (
+                  <section className="share-panel-soft flex flex-col items-center gap-3 rounded-xl p-6 text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 text-3xl">
+                      💬
+                    </div>
+                    <div className="text-sm font-semibold">{t('amigosLocked')}</div>
+                    <p className="max-w-xs text-xs text-slate-400">{t('amigosLockedHint')}</p>
+                    <a
+                      href="/login"
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110"
+                    >
+                      <span className="text-lg leading-none">🌐</span> {t('signInGoogle')}
+                    </a>
+                  </section>
+                )
               )}
 
               {/* Amigos: convites, código e lista */}

@@ -200,6 +200,56 @@ export function ensureDb(): Promise<void> {
           PRIMARY KEY (follower_id, followee_id)
         )
       `
+      // --- Bate-papo social entre amigos (1:1, estilo WhatsApp) ---
+      // Conversa iniciada por user_a para user_b. status: pending (aguardando
+      // aceite), active (aceita), declined (recusada — some dos dois lados).
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_conversations (
+          id            text PRIMARY KEY,
+          user_a        text NOT NULL,
+          user_b        text NOT NULL,
+          status        text NOT NULL DEFAULT 'pending',
+          created_at    bigint NOT NULL,
+          last_activity bigint NOT NULL,
+          declined_at   bigint
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS social_conv_a_idx
+          ON social_conversations (user_a, last_activity)
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS social_conv_b_idx
+          ON social_conversations (user_b, last_activity)
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_messages (
+          id              text PRIMARY KEY,
+          conversation_id text NOT NULL REFERENCES social_conversations(id) ON DELETE CASCADE,
+          sender_id       text NOT NULL,
+          text            text NOT NULL,
+          time            bigint NOT NULL,
+          read            boolean NOT NULL DEFAULT false
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS social_messages_conv_idx
+          ON social_messages (conversation_id, time)
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS social_chat_notifications (
+          id         text PRIMARY KEY,
+          user_id    text NOT NULL,
+          from_id    text NOT NULL,
+          text       text NOT NULL,
+          created_at bigint NOT NULL,
+          read       boolean NOT NULL DEFAULT false
+        )
+      `
+      await sql`
+        CREATE INDEX IF NOT EXISTS social_chat_notif_idx
+          ON social_chat_notifications (user_id, created_at)
+      `
       await sql`
         CREATE TABLE IF NOT EXISTS rooms (
           id         text PRIMARY KEY,

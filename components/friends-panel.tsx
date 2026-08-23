@@ -149,7 +149,7 @@ export function FriendsPanel({
   const [tab, setTab] = useState<'enviar' | 'convites' | 'amigos'>('enviar')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => Date.now())
 
   // Relógio de 1s para a contagem regressiva dos convites de sala (5min).
   useEffect(() => {
