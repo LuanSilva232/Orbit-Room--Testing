@@ -520,6 +520,9 @@ export function ShareRoom() {
   const [micOn, setMicOn] = useState(false)
   const [screenStreaming, setScreenStreaming] = useState(false)
   const [screenWithAudio, setScreenWithAudio] = useState(false)
+  // Mudo do áudio da TELA que está sendo compartilhada (controlado pelo alto-falante
+  // ao lado do botão "Compartilhar"). Muta a trilha de som para todos os ouvintes.
+  const [screenAudioMuted, setScreenAudioMuted] = useState(false)
   // Aba ativa na tela de chamada: perfis padrão, câmeras ou telas compartilhadas.
   const [callView, setCallView] = useState<'profiles' | 'cameras' | 'screens'>('profiles')
   // Stream local reativo (mic/câmera), para a grade reagir na hora que fica pronto.
@@ -2161,11 +2164,26 @@ export function ShareRoom() {
           'iPhone: abra o Centro de Controle e toque em "Transmissão de tela" para começar a compartilhar.'
         )
       }
+      // Áudio da tela: sem cancelamento de eco/supressão (que abafam o som da
+      // tela). O Chrome só entrega áudio quando a fonte tem som próprio — isso
+      // acontece ao compartilhar uma ABA marcando "incluir áudio da guia".
+      const screenAudioConstraints = screenWithAudio
+        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        : false
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: videoConstraints,
-        audio: screenWithAudio,
+        audio: screenAudioConstraints,
       })
       screenStreamRef.current = stream
+      // Pedimos o áudio mas a fonte escolhida não trouxe som (janela/tela cheia
+      // não têm áudio; só aba com "incluir áudio da guia"). Orienta o usuário.
+      if (screenWithAudio && stream.getAudioTracks().length === 0) {
+        toast.info(
+          'Sem áudio na tela: o som só sai ao compartilhar uma ABA e marcar "incluir áudio da guia". Janela e tela cheia não têm som.'
+        )
+      }
+      // Aplica o mudo do áudio da tela (alto-falante ao lado de "Compartilhar").
+      if (screenAudioMuted) stream.getAudioTracks().forEach((t) => (t.enabled = false))
       engine?.addLocalStream(stream)
       setScreenStreaming(true)
       broadcastScreenKind([stream.getVideoTracks()[0]?.id ?? ''].filter(Boolean))
@@ -2179,7 +2197,7 @@ export function ShareRoom() {
     } catch {
       toast.error('Compartilhamento de tela cancelado')
     }
-  }, [applyQualityToStreams, quality, broadcastScreenKind, screenWithAudio])
+  }, [applyQualityToStreams, quality, broadcastScreenKind, screenWithAudio, screenAudioMuted])
 
   const sendChat = useCallback(() => {
     const text = draft.trim()
@@ -3573,16 +3591,36 @@ export function ShareRoom() {
                   </button>
                 )}
                 <button
-                  onClick={() => setScreenWithAudio((o) => !o)}
-                  disabled={screenStreaming}
-                  title={t('screenAudio')}
-                  className={`flex h-8 min-w-28 items-center justify-center gap-1 rounded-full px-3 text-[11px] font-semibold transition disabled:opacity-40 ${
-                    screenWithAudio
-                      ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/30'
-                      : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                  onClick={() => {
+                    if (screenStreaming) {
+                      // Já compartilhando: o alto-falante muta/desmuta o som da tela
+                      // para todos ao vivo (silencia a trilha de áudio da tela).
+                      const next = !screenAudioMuted
+                      setScreenAudioMuted(next)
+                      screenStreamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !next))
+                    } else {
+                      // Antes de compartilhar: escolhe se quer capturar o som.
+                      setScreenWithAudio((o) => !o)
+                    }
+                  }}
+                  title={screenStreaming ? (screenAudioMuted ? t('screenUnmute') : t('screenMute')) : t('screenAudio')}
+                  className={`flex h-8 min-w-28 items-center justify-center gap-1 rounded-full px-3 text-[11px] font-semibold transition ${
+                    screenStreaming
+                      ? screenAudioMuted
+                        ? 'bg-white/10 text-slate-300'
+                        : 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/30'
+                      : screenWithAudio
+                        ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/30'
+                        : 'bg-white/10 text-slate-300 hover:bg-white/15'
                   }`}
                 >
-                  {screenWithAudio ? `🔊 ${t('screenAudio')}` : `🔇 ${t('screenNoAudio')}`}
+                  {screenStreaming
+                    ? screenAudioMuted
+                      ? `🔇 ${t('screenMute')}`
+                      : `🔊 ${t('screenAudio')}`
+                    : screenWithAudio
+                      ? `🔊 ${t('screenAudio')}`
+                      : `🔇 ${t('screenNoAudio')}`}
                 </button>
                 <label className="flex h-8 items-center gap-1.5 rounded-full bg-white/10 px-3 text-[11px] font-medium text-slate-300">
                   {t('currentQuality')}
@@ -5266,5 +5304,4 @@ export function ShareRoom() {
     </div>
   )
 }
-
 
