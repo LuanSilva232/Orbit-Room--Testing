@@ -629,9 +629,9 @@ export function ShareRoom() {
 
   useEffect(() => {
     const map: Record<string, string> = {}
-    for (const r of [...rooms, ...myRooms]) map[r.id] = r.name
+    for (const r of [...rooms, ...myRooms, ...privateRooms]) map[r.id] = r.name
     roomLabelsRef.current = map
-  }, [rooms, myRooms])
+  }, [rooms, myRooms, privateRooms])
 
   useEffect(() => {
     void loadRooms()
@@ -4319,6 +4319,7 @@ export function ShareRoom() {
                 <section className="share-panel-soft flex flex-col gap-3 rounded-xl p-3">
                   <div className="text-sm font-semibold">🤝 {t('friendsOnline')}</div>
                   <FriendsOnline
+                    roomNameOf={(id) => roomLabelsRef.current[id] ?? channelLabel(id)}
                     onOpenProfile={(p) =>
                       setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined, bio: p.bio ?? undefined, cover: p.cover ?? undefined })
                     }

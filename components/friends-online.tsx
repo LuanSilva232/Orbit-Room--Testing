@@ -13,6 +13,21 @@ type Friend = {
   code?: string | null
   online: boolean
   channelId: string | null
+  onlineSince?: number | null
+  lastSeen?: number | null
+}
+
+// "Agora", "5 min", "2h 10min", "3d"...
+function fmtAgo(ts?: number | null): string | null {
+  if (!ts) return null
+  const diff = Math.max(0, Date.now() - ts)
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return 'agora'
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h}h ${min % 60}min`
+  const d = Math.floor(h / 24)
+  return `${d} dia${d > 1 ? 's' : ''}`
 }
 
 const Avatar = ({ name, photo, size = 36 }: { name?: string; photo?: string | null; size?: number }) => (
@@ -31,7 +46,13 @@ const Avatar = ({ name, photo, size = 36 }: { name?: string; photo?: string | nu
 )
 
 // Mostra SOMENTE os amigos (online e offline). Anônimos e visitantes não aparecem.
-export function FriendsOnline({ onOpenProfile }: { onOpenProfile: OpenProfileFn }) {
+export function FriendsOnline({
+  onOpenProfile,
+  roomNameOf,
+}: {
+  onOpenProfile: OpenProfileFn
+  roomNameOf?: (channelId: string) => string | null
+}) {
   const [friends, setFriends] = useState<Friend[]>([])
   const [following, setFollowing] = useState<string[]>([])
   const [logged, setLogged] = useState<boolean | null>(null)
@@ -105,12 +126,17 @@ export function FriendsOnline({ onOpenProfile }: { onOpenProfile: OpenProfileFn 
                   <Avatar name={f.name} photo={f.photo} size={32} />
                   <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-emerald-400" />
                 </button>
-                <span className="min-w-0 flex-1 truncate text-slate-200">{f.name}</span>
-                {f.channelId && (
-                  <span translate="no" className="shrink-0 rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">
-                    {f.channelId}
-                  </span>
-                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-slate-200">{f.name}</div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                    {f.channelId && (
+                      <span translate="no" className="truncate" title="Sala em que está">
+                        📍 {roomNameOf?.(f.channelId) ?? f.channelId}
+                      </span>
+                    )}
+                    <span className="shrink-0 text-emerald-300/80">online há {fmtAgo(f.onlineSince) ?? 'agora'}</span>
+                  </div>
+                </div>
                 <button
                   onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
                   className="shrink-0 px-1.5 text-slate-500 transition hover:text-white"
@@ -149,7 +175,10 @@ export function FriendsOnline({ onOpenProfile }: { onOpenProfile: OpenProfileFn 
                   <Avatar name={f.name} photo={f.photo} size={28} />
                   <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-900 bg-slate-500" />
                 </button>
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate">{f.name}</div>
+                  <div className="text-[11px] text-slate-500">offline há {fmtAgo(f.lastSeen) ?? '—'}</div>
+                </div>
                 <button
                   onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
                   className="shrink-0 px-1.5 text-slate-500 transition hover:text-white"

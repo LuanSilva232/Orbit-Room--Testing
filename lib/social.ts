@@ -103,6 +103,45 @@ async function onlineChannels(userIds: string[]): Promise<Map<string, string>> {
   return map
 }
 
+/** Presença rica dos usuários online: canal + desde quando (joined_at) + última atividade (last_seen). */
+type Presence = { channel: string; onlineSince: number; lastSeen: number }
+async function presenceFor(userIds: string[]): Promise<Map<string, Presence>> {
+  const map = new Map<string, Presence>()
+  if (userIds.length === 0) return map
+  const rows = await getSql()<{
+    user_id: string
+    channel: string
+    joined_at: string | number
+    last_seen: string | number
+  }[]>`
+    SELECT DISTINCT ON (user_id) user_id, channel, joined_at, last_seen
+    FROM rtc_clients
+    WHERE user_id = ANY(${userIds}) AND left_at IS NULL AND last_seen > ${Date.now() - OFFLINE_MS}
+    ORDER BY user_id, last_seen DESC
+  `
+  for (const r of rows)
+    map.set(r.user_id, {
+      channel: r.channel,
+      onlineSince: Number(r.joined_at),
+      lastSeen: Number(r.last_seen),
+    })
+  return map
+}
+
+/** Última atividade (last_seen) de cada usuário, online ou offline. */
+async function lastSeenFor(userIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (userIds.length === 0) return map
+  const rows = await getSql()<{ user_id: string; last_seen: string | number }[]>`
+    SELECT DISTINCT ON (user_id) user_id, last_seen
+    FROM rtc_clients
+    WHERE user_id = ANY(${userIds})
+    ORDER BY user_id, last_seen DESC
+  `
+  for (const r of rows) map.set(r.user_id, Number(r.last_seen))
+  return map
+}
+
 // --- Resumo completo (painel "Amigos" + "Amigos online") --------------------
 
 export type SocialOverview = {
@@ -126,6 +165,8 @@ export type SocialOverview = {
     code: string | null
     online: boolean
     channelId: string | null
+    onlineSince: number | null
+    lastSeen: number | null
   }[]
   requests: {
     requestId: string
@@ -147,7 +188,8 @@ export async function getSocialOverview(meId: string): Promise<SocialOverview> {
     followerRows(meId),
     followingRows(meId),
   ])
-  const online = await onlineChannels(friends.map((f) => f.id))
+  const online = await presenceFor(friends.map((f) => f.id))
+  const lastSeen = await lastSeenFor(friends.map((f) => f.id))
   return {
     me: {
       id: me.id,
@@ -160,16 +202,21 @@ export async function getSocialOverview(meId: string): Promise<SocialOverview> {
       followersCount: followers.length,
       followingCount: following.length,
     },
-    friends: friends.map((f) => ({
-      id: f.id,
-      name: f.display_name,
-      photo: f.photo,
-      cover: f.cover,
-      bio: f.bio,
-      code: f.friend_code,
-      online: online.has(f.id),
-      channelId: online.get(f.id) ?? null,
-    })),
+    friends: friends.map((f) => {
+      const p = online.get(f.id)
+      return {
+        id: f.id,
+        name: f.display_name,
+        photo: f.photo,
+        cover: f.cover,
+        bio: f.bio,
+        code: f.friend_code,
+        online: Boolean(p),
+        channelId: p?.channel ?? null,
+        onlineSince: p?.onlineSince ?? null,
+        lastSeen: lastSeen.get(f.id) ?? null,
+      }
+    }),
     requests,
     followers: followers.map((f) => ({ id: f.id, displayName: f.display_name, photo: f.photo })),
     following: following.map((f) => ({ id: f.id, displayName: f.display_name, photo: f.photo })),
