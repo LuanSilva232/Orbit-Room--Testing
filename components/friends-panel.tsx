@@ -123,6 +123,15 @@ type RoomInvite = {
   fromName: string
   fromPhoto?: string | null
   createdAt: number
+  expiresAt: number
+}
+
+// Formata os minutos:segundos restantes de um convite (ex.: "4:32").
+function fmtCountdown(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 export function FriendsPanel({
@@ -140,6 +149,16 @@ export function FriendsPanel({
   const [tab, setTab] = useState<'enviar' | 'convites' | 'amigos'>('enviar')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
+  const [now, setNow] = useState(Date.now())
+
+  // Relógio de 1s para a contagem regressiva dos convites de sala (5min).
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Convites de sala ainda válidos (não expirados).
+  const activeInvites = roomInvites.filter((inv) => inv.expiresAt - now > 0)
 
   const load = () =>
     fetch('/api/social')
@@ -245,7 +264,7 @@ export function FriendsPanel({
           {/* Abas */}
           <div className="flex gap-2">
             <Aba active={tab === 'enviar'} onClick={() => setTab('enviar')} label="Enviar" />
-            <Aba active={tab === 'convites'} onClick={() => setTab('convites')} label="Convites" count={data.requests.length + roomInvites.length} />
+            <Aba active={tab === 'convites'} onClick={() => setTab('convites')} label="Convites" count={data.requests.length + activeInvites.length} />
             <Aba active={tab === 'amigos'} onClick={() => setTab('amigos')} label="Amigos" count={data.friends.length} />
           </div>
         </>
@@ -329,38 +348,45 @@ export function FriendsPanel({
             {/* Caixa de correio: convites de sala */}
             <div className="rounded-2xl border border-white/5 bg-white/5 p-3">
               <h4 className="mb-2 text-sm font-bold text-slate-200">📨 Convites de sala</h4>
-              {roomInvites.length === 0 ? (
+              {activeInvites.length === 0 ? (
                 <p className="py-3 text-center text-xs text-slate-500">
                   Nenhum convite de sala. Quando um amigo te convidar, a sala aparece aqui.
                 </p>
               ) : (
                 <div className="space-y-1.5">
-                  {roomInvites.map((inv) => (
-                    <div key={inv.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
-                      <Avatar name={inv.fromName} photo={inv.fromPhoto} size={32} />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-slate-200">
-                          {inv.fromName} convidou para &quot;{inv.roomName}&quot;
-                        </p>
-                        <p className="text-[10px] text-slate-400">
-                          {inv.isPrivate ? '🔒 Sala privada' : '🌐 Sala pública'}
-                        </p>
+                  {activeInvites.map((inv) => {
+                    const left = Math.max(0, inv.expiresAt - now)
+                    const expiring = left <= 30 * 1000
+                    return (
+                      <div key={inv.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
+                        <Avatar name={inv.fromName} photo={inv.fromPhoto} size={32} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-slate-200">
+                            {inv.fromName} convidou para &quot;{inv.roomName}&quot;
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {inv.isPrivate ? '🔒 Sala privada' : '🌐 Sala pública'}
+                            <span className="ml-1.5 font-semibold tabular-nums text-slate-300">
+                              · ⏳ {fmtCountdown(left)}
+                            </span>
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => onJoinRoom(inv.roomId)}
+                          className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
+                        >
+                          Entrar na sala
+                        </button>
+                        <button
+                          onClick={() => onDeclineRoomInvite(inv.roomId)}
+                          className="shrink-0 rounded-lg bg-white/5 px-2 py-1.5 text-xs font-medium text-slate-400 ring-1 ring-white/10 transition hover:bg-white/10"
+                          title="Recusar"
+                        >
+                          ✕
+                        </button>
                       </div>
-                      <button
-                        onClick={() => onJoinRoom(inv.roomId)}
-                        className="shrink-0 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30"
-                      >
-                        Entrar na sala
-                      </button>
-                      <button
-                        onClick={() => onDeclineRoomInvite(inv.roomId)}
-                        className="shrink-0 rounded-lg bg-white/5 px-2 py-1.5 text-xs font-medium text-slate-400 ring-1 ring-white/10 transition hover:bg-white/10"
-                        title="Recusar"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>

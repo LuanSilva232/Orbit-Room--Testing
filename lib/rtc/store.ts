@@ -25,6 +25,7 @@ export const LOGGED_MSG_MS = 48 * 60 * 60 * 1000 // mensagens de contas logadas 
 export const ANON_OFFLINE_MS = 15 * 24 * 60 * 60 * 1000 // anônimo offline é apagado após 15 dias (cache temporário)
 export const DELETE_GRACE_MS = 3 * 24 * 60 * 60 * 1000 // 3 dias para "se arrepender" antes de excluir a conta
 export const MAX_PUBLIC_MEMBERS = 10 // limite por sala pública, para não travar (lentidão)
+export const INVITE_TTL_MS = 5 * 60 * 1000 // 5min para aceitar/recusar um convite de sala
 
 type ClientRow = {
   client_id: string
@@ -379,6 +380,11 @@ export async function updateRoom(
 
 // --- Convites de sala ---
 
+/** Apaga convites de sala que já expiraram (5min). */
+async function purgeExpiredInvites(): Promise<void> {
+  await getSql()`DELETE FROM room_invites WHERE expires_at IS NOT NULL AND expires_at <= ${nowMs()}`
+}
+
 export async function sendRoomInvite(
   fromUserId: string,
   roomId: string,
@@ -394,18 +400,20 @@ export async function sendRoomInvite(
   // Evita duplicar: remove convite anterior do mesmo amigo para a mesma sala.
   await getSql()`DELETE FROM room_invites WHERE room_id = ${roomId} AND to_id = ${toUserId}`
   await getSql()`
-    INSERT INTO room_invites (id, room_id, from_id, to_id, created_at)
-    VALUES (${id}, ${roomId}, ${fromUserId}, ${toUserId}, ${nowMs()})
+    INSERT INTO room_invites (id, room_id, from_id, to_id, created_at, expires_at)
+    VALUES (${id}, ${roomId}, ${fromUserId}, ${toUserId}, ${nowMs()}, ${nowMs() + INVITE_TTL_MS})
   `
 }
 
 export async function listRoomInvites(toUserId: string): Promise<RoomInvite[]> {
   await ensureDb()
+  await purgeExpiredInvites()
   type InviteRow = {
     id: string
     room_id: string
     from_id: string
     created_at: string | number
+    expires_at: string | number | null
     room_name: string
     is_private: boolean
     password: string | null
@@ -413,7 +421,7 @@ export async function listRoomInvites(toUserId: string): Promise<RoomInvite[]> {
     from_photo: string | null
   }
   const rows = await getSql()<InviteRow[]>`
-    SELECT i.id, i.room_id, i.from_id, i.created_at,
+    SELECT i.id, i.room_id, i.from_id, i.created_at, i.expires_at,
            r.name AS room_name, r.is_private, r.password,
            u.display_name AS from_name, u.photo AS from_photo
     FROM room_invites i
@@ -432,14 +440,19 @@ export async function listRoomInvites(toUserId: string): Promise<RoomInvite[]> {
     fromName: r.from_name ?? 'Usuário',
     fromPhoto: r.from_photo,
     createdAt: Number(r.created_at),
+    expiresAt: r.expires_at != null ? Number(r.expires_at) : Number(r.created_at) + INVITE_TTL_MS,
   }))
 }
 
-/** Verifica se o usuário tem um convite ativo para a sala (permite entrar sem senha). */
+/** Verifica se o usuário tem um convite ativo (não expirado) para a sala (permite entrar sem senha). */
 export async function hasRoomInvite(roomId: string, userId: string): Promise<boolean> {
   await ensureDb()
+  await purgeExpiredInvites()
   const rows = await getSql()<{ id: string }[]>`
-    SELECT id FROM room_invites WHERE room_id = ${roomId} AND to_id = ${userId} LIMIT 1
+    SELECT id FROM room_invites
+    WHERE room_id = ${roomId} AND to_id = ${userId}
+      AND (expires_at IS NULL OR expires_at > ${nowMs()})
+    LIMIT 1
   `
   return rows.length > 0
 }

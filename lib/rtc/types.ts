@@ -36,6 +36,7 @@ export type RoomInvite = {
   fromName: string
   fromPhoto: string | null
   createdAt: number
+  expiresAt: number
 }
 
 export type SignalKind = 'offer' | 'answer' | 'ice'
@@ -96,4 +97,3 @@ export type MailboxMessage =
   | { id: number; type: 'screen-kind'; from: string; trackIds: string[] }
   | { id: number; type: 'admin-mute'; targetId: string; muted: boolean }
   | { id: number; type: 'kicked'; reason?: string }
-  

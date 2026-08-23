@@ -238,6 +238,10 @@ export function ensureDb(): Promise<void> {
           ON room_invites (to_id, created_at)
       `
       await sql`
+        ALTER TABLE room_invites
+          ADD COLUMN IF NOT EXISTS expires_at bigint
+      `
+      await sql`
         CREATE TABLE IF NOT EXISTS oauth_accounts (
           id                 text PRIMARY KEY,
           user_id            text NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -636,6 +636,14 @@ export function ShareRoom() {
   const [inviteFriends, setInviteFriends] = useState<{ id: string; displayName: string; photo: string | null; online: boolean }[]>([])
   const [inviteLoading, setInviteLoading] = useState(false)
   const roomLabelsRef = useRef<Record<string, string>>({})
+  // Convites de sala já vistos (para disparar o alerta só quando chega um novo).
+  const seenInvitesRef = useRef<Set<string>>(new Set())
+  // Abre a subcategoria "Amigos/Convites" no painel de Configurações.
+  const openInvitesTab = useCallback(() => {
+    setConfigPane('amigos')
+    setConfigOpen(true)
+    setMobileTab('config')
+  }, [])
 
   const loadRooms = useCallback(async () => {
     const [pub, priv, mine, inv] = await Promise.all([
@@ -647,8 +655,30 @@ export function ShareRoom() {
     if (pub.success) setRooms(pub.data.rooms)
     if (priv.success) setPrivateRooms(priv.data.rooms)
     if (mine.success) setMyRooms(mine.data.rooms)
-    if (inv.success) setRoomInvites(inv.data.roomInvites)
-  }, [])
+    if (inv.success) {
+      setRoomInvites(inv.data.roomInvites)
+      // Alerta no site para cada convite de sala novo.
+      for (const invite of inv.data.roomInvites) {
+        if (seenInvitesRef.current.has(invite.id)) continue
+        seenInvitesRef.current.add(invite.id)
+        toast(
+          <div>
+            <div className="mb-1 text-sm font-semibold">{invite.fromName} está te chamando para a sala</div>
+            <div className="text-xs text-slate-500">&quot;{invite.roomName}&quot;</div>
+            <button
+              className="mt-2 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-600"
+              onClick={() => {
+                toast.dismiss()
+                openInvitesTab()
+              }}
+            >
+              Ir
+            </button>
+          </div>
+        )
+      }
+    }
+  }, [openInvitesTab])
 
   useEffect(() => {
     const map: Record<string, string> = {}
