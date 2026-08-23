@@ -34,15 +34,17 @@ const NOTIFY_ASKED_KEY = 'share_room_notify_asked'
 
 const INVITE_ALERT_SECONDS = 7
 
-// Aviso de convite de sala: título + nome da sala, botão "Ir" e, embaixo,
-// um cronômetro de 7s à esquerda e o botão "Fechar" à direita.
+// Aviso de convite de sala: card pequeno e discreto no canto inferior direito.
+// Mostra quem chamou, o nome da sala, um cronômetro de 7s e botões "Ir" e "Fechar".
 function InviteAlert({
   fromName,
+  fromPhoto,
   roomName,
   onGo,
   dismiss,
 }: {
   fromName: string
+  fromPhoto: string | null
   roomName: string
   onGo: () => void
   dismiss: () => void
@@ -59,21 +61,34 @@ function InviteAlert({
   }, [left, dismiss])
 
   return (
-    <div>
-      <div className="mb-1 text-sm font-semibold">{fromName} está te chamando para a sala</div>
-      <div className="text-xs text-slate-500">&quot;{roomName}&quot;</div>
-      <div className="mt-2.5 flex items-center justify-between gap-3">
-        <span className="text-xs font-medium tabular-nums text-slate-400">{left}s</span>
-        <div className="flex items-center gap-2">
+    <div className="pointer-events-auto w-[19rem] overflow-hidden rounded-2xl border border-white/10 bg-slate-900/90 p-3 shadow-2xl shadow-black/50 backdrop-blur">
+      <div className="flex items-start gap-2.5">
+        {fromPhoto ? (
+          <img src={fromPhoto} alt={fromName} className="mt-0.5 h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-white/10" />
+        ) : (
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-500/30 text-sm font-bold text-indigo-200 ring-2 ring-white/10">
+            {fromName.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-bold text-white">{fromName}</p>
+          <p className="truncate text-xs text-slate-400">
+            te chamou para &quot;<span className="font-semibold text-emerald-300">{roomName}</span>&quot;
+          </p>
+        </div>
+      </div>
+      <div className="mt-2.5 flex items-center justify-between border-t border-white/5 pt-2.5">
+        <span className="text-xs font-semibold tabular-nums text-slate-400">{left}s</span>
+        <div className="flex items-center gap-1.5">
           <button
             onClick={onGo}
-            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-600"
+            className="rounded-lg bg-emerald-500 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-600 active:scale-95"
           >
             Ir
           </button>
           <button
             onClick={dismiss}
-            className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 ring-1 ring-white/10 transition hover:bg-white/20"
+            className="rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-slate-300 ring-1 ring-white/10 transition hover:bg-white/20 active:scale-95"
           >
             Fechar
           </button>
@@ -665,6 +680,13 @@ export function ShareRoom() {
   const [myRooms, setMyRooms] = useState<Room[]>([]) // salas que criei
   const [privateRooms, setPrivateRooms] = useState<Room[]>([]) // salas privadas (de todos, ocupadas)
   const [roomInvites, setRoomInvites] = useState<RoomInvite[]>([]) // convites de sala recebidos
+  // Avisos ativos de convite (cards pequenos no canto inferior direito).
+  const [inviteAlerts, setInviteAlerts] = useState<
+    { id: string; fromName: string; fromPhoto: string | null; roomName: string }[]
+  >([])
+  const closeInviteAlert = useCallback((id: string) => {
+    setInviteAlerts((alerts) => alerts.filter((a) => a.id !== id))
+  }, [])
   const [newRoomName, setNewRoomName] = useState('')
   const [newRoomPrivate, setNewRoomPrivate] = useState(false)
   const [newRoomPassword, setNewRoomPassword] = useState('')
@@ -712,18 +734,10 @@ export function ShareRoom() {
       for (const invite of inv.data.roomInvites) {
         if (seenInvitesRef.current.has(invite.id)) continue
         seenInvitesRef.current.add(invite.id)
-        const id = toast(
-          <InviteAlert
-            fromName={invite.fromName}
-            roomName={invite.roomName}
-            onGo={() => {
-              toast.dismiss(id)
-              openInvitesTab()
-            }}
-            dismiss={() => toast.dismiss(id)}
-          />,
-          { duration: INVITE_ALERT_SECONDS * 1000 }
-        )
+        setInviteAlerts((alerts) => [
+          ...alerts,
+          { id: invite.id, fromName: invite.fromName, fromPhoto: invite.fromPhoto ?? null, roomName: invite.roomName },
+        ])
       }
     }
   }, [openInvitesTab])
@@ -3175,6 +3189,23 @@ export function ShareRoom() {
       }}
     >
       <Toaster position="top-center" theme="dark" />
+
+      {/* Avisos de convite de sala — cards pequenos centralizados no topo */}
+      <div className="pointer-events-none fixed inset-x-0 top-4 z-[9999] flex flex-col items-center gap-2 px-4">
+        {inviteAlerts.map((alert) => (
+          <InviteAlert
+            key={alert.id}
+            fromName={alert.fromName}
+            fromPhoto={alert.fromPhoto}
+            roomName={alert.roomName}
+            onGo={() => {
+              closeInviteAlert(alert.id)
+              openInvitesTab()
+            }}
+            dismiss={() => closeInviteAlert(alert.id)}
+          />
+        ))}
+      </div>
 
       {/* Sidebar */}
       <aside
