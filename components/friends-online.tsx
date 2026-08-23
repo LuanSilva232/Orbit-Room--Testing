@@ -49,9 +49,13 @@ const Avatar = ({ name, photo, size = 36 }: { name?: string; photo?: string | nu
 export function FriendsOnline({
   onOpenProfile,
   roomNameOf,
+  isAdmin = false,
+  onEnterRoom,
 }: {
   onOpenProfile: OpenProfileFn
   roomNameOf?: (channelId: string) => string | null
+  isAdmin?: boolean
+  onEnterRoom?: (channelId: string) => void
 }) {
   const [friends, setFriends] = useState<Friend[]>([])
   const [following, setFollowing] = useState<string[]>([])
@@ -137,6 +141,16 @@ export function FriendsOnline({
                     <span className="shrink-0 text-emerald-300/80">online há {fmtAgo(f.onlineSince) ?? 'agora'}</span>
                   </div>
                 </div>
+                {isAdmin && f.channelId ? (
+                  <button
+                    onClick={() => onEnterRoom?.(f.channelId!)}
+                    className="shrink-0 rounded-lg bg-emerald-500/20 px-2 py-1 text-[11px] font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/30 active:scale-95"
+                    title={`Entrar na sala de ${f.name} (admin)`}
+                    aria-label={`Entrar na sala de ${f.name}`}
+                  >
+                    Entrar
+                  </button>
+                ) : null}
                 <button
                   onClick={() => onOpenProfile({ userId: f.id, name: f.name, photo: f.photo, bio: f.bio, cover: f.cover })}
                   className="shrink-0 px-1.5 text-slate-500 transition hover:text-white"

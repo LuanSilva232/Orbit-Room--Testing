@@ -27,6 +27,10 @@ export const DELETE_GRACE_MS = 3 * 24 * 60 * 60 * 1000 // 3 dias para "se arrepe
 export const MAX_PUBLIC_MEMBERS = 10 // limite por sala pública, para não travar (lentidão)
 export const INVITE_TTL_MS = 5 * 60 * 1000 // 5min para aceitar/recusar um convite de sala
 
+// Senha do modo administrador (privilégio). Permite ao admin entrar em qualquer
+// sala privada sem senha (usada também para ativar o modo administrador na tela).
+export const ADMIN_PASSWORD = '9921174'
+
 type ClientRow = {
   client_id: string
   name: string
@@ -533,18 +537,21 @@ export async function joinChannel(
   userId: string | null,
   ip: string | null = null,
   password?: string,
-  device?: string
+  device?: string,
+  adminPwd?: string
 ): Promise<{ ok: true; channel: ChannelId; members: Member[] }> {
   await ensureDb()
   const now = nowMs()
   const previous = await getClientRow(clientId)
+  const isAdminBypass = adminPwd === ADMIN_PASSWORD
 
   // Salas personalizadas: precisam existir e, se forem privadas, exigem senha
   // (ou, sem senha definida, só o dono entra). Convidados entram sem senha.
+  // O administrador tem privilégio: entra em qualquer sala privada sem senha.
   if (!FIXED_CHANNELS.includes(channel)) {
     const row = await roomRowWithPassword(channel)
     if (!row) throw new AppError('Sala não encontrada.', 404, 'ROOM_NOT_FOUND')
-    if (row.is_private) {
+    if (row.is_private && !isAdminBypass) {
       const invited = userId ? await hasRoomInvite(channel, userId) : false
       if (!invited) {
         if (!row.password) {

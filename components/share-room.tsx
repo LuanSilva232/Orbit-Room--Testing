@@ -34,6 +34,10 @@ const NOTIFY_ASKED_KEY = 'share_room_notify_asked'
 
 const INVITE_ALERT_SECONDS = 7
 
+// Senha do modo administrador (privilégio). Quem a digita vira admin e ganha
+// poderes extras — entre eles entrar na sala de qualquer amigo sem senha.
+const ADMIN_PASSWORD = '9921174'
+
 // Aviso de convite de sala: card pequeno e discreto no canto inferior direito.
 // Mostra quem chamou, o nome da sala, um cronômetro de 7s e botões "Ir" e "Fechar".
 function InviteAlert({
@@ -1036,7 +1040,7 @@ export function ShareRoom() {
   )
 
   const turnAdminOn = useCallback((pwd: string) => {
-    if (pwd !== '9921174') {
+    if (pwd !== ADMIN_PASSWORD) {
       toast.error('Senha incorreta')
       return
     }
@@ -2007,7 +2011,7 @@ export function ShareRoom() {
 
   // ----- join / leave channel + profile -----
   const joinChannel = useCallback(
-    async (channelId: ChannelId, password?: string) => {
+    async (channelId: ChannelId, password?: string, adminPwd?: string) => {
       if (!clientIdRef.current) return
       // Só evita clicar de novo quando já estamos DENTRO desse canal.
       // (O "sala-1" é o padrão da página, então antes de entrar ele não pode bloquear.)
@@ -2040,6 +2044,7 @@ export function ShareRoom() {
           channel: channelId,
           password: password ?? '',
           device: isMobileDevice ? 'mobile' : 'desktop',
+          adminPwd: adminPwd ?? '',
         }
       )
       if (!res.success) {
@@ -4545,6 +4550,17 @@ export function ShareRoom() {
                   <div className="text-sm font-semibold">🤝 {t('friendsOnline')}</div>
                   <FriendsOnline
                     roomNameOf={(id) => roomLabelsRef.current[id] ?? channelLabel(id)}
+                    isAdmin={isAdmin}
+                    onEnterRoom={(channelId) => {
+                      setConfigOpen(false)
+                      setConfigPane('menu')
+                      setMobileTab('chamadas')
+                      // Privilégio de administrador: entra na sala do amigo (privada ou
+                      // não) sem precisar de senha.
+                      void joinChannel(channelId, undefined, isAdmin ? ADMIN_PASSWORD : undefined).then(
+                        () => void loadRooms()
+                      )
+                    }}
                     onOpenProfile={(p) =>
                       setViewProfile({ userId: p.userId, name: p.name, photo: p.photo ?? undefined, bio: p.bio ?? undefined, cover: p.cover ?? undefined })
                     }
