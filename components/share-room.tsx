@@ -32,6 +32,57 @@ const CLIENT_KEY = 'share_room_client_id'
 const PROFILE_KEY = 'share_room_profile'
 const NOTIFY_ASKED_KEY = 'share_room_notify_asked'
 
+const INVITE_ALERT_SECONDS = 7
+
+// Aviso de convite de sala: título + nome da sala, botão "Ir" e, embaixo,
+// um cronômetro de 7s à esquerda e o botão "Fechar" à direita.
+function InviteAlert({
+  fromName,
+  roomName,
+  onGo,
+  dismiss,
+}: {
+  fromName: string
+  roomName: string
+  onGo: () => void
+  dismiss: () => void
+}) {
+  const [left, setLeft] = useState(INVITE_ALERT_SECONDS)
+
+  useEffect(() => {
+    if (left <= 0) {
+      dismiss()
+      return
+    }
+    const t = setTimeout(() => setLeft((v) => v - 1), 1000)
+    return () => clearTimeout(t)
+  }, [left, dismiss])
+
+  return (
+    <div>
+      <div className="mb-1 text-sm font-semibold">{fromName} está te chamando para a sala</div>
+      <div className="text-xs text-slate-500">&quot;{roomName}&quot;</div>
+      <div className="mt-2.5 flex items-center justify-between gap-3">
+        <span className="text-xs font-medium tabular-nums text-slate-400">{left}s</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onGo}
+            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-600"
+          >
+            Ir
+          </button>
+          <button
+            onClick={dismiss}
+            className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 ring-1 ring-white/10 transition hover:bg-white/20"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Identidade anônima persistente por dispositivo: além do localStorage, o ID é
 // guardado no IndexedDB para que o mesmo navegador/celular "lembre" da mesma
 // conta anônima mesmo se o localStorage for limpo — evitando duplicar contas.
@@ -661,20 +712,17 @@ export function ShareRoom() {
       for (const invite of inv.data.roomInvites) {
         if (seenInvitesRef.current.has(invite.id)) continue
         seenInvitesRef.current.add(invite.id)
-        toast(
-          <div>
-            <div className="mb-1 text-sm font-semibold">{invite.fromName} está te chamando para a sala</div>
-            <div className="text-xs text-slate-500">&quot;{invite.roomName}&quot;</div>
-            <button
-              className="mt-2 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-600"
-              onClick={() => {
-                toast.dismiss()
-                openInvitesTab()
-              }}
-            >
-              Ir
-            </button>
-          </div>
+        const id = toast(
+          <InviteAlert
+            fromName={invite.fromName}
+            roomName={invite.roomName}
+            onGo={() => {
+              toast.dismiss(id)
+              openInvitesTab()
+            }}
+            dismiss={() => toast.dismiss(id)}
+          />,
+          { duration: INVITE_ALERT_SECONDS * 1000 }
         )
       }
     }
