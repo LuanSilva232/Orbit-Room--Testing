@@ -21,6 +21,8 @@ export type RtcEngineEvents = {
 export const DEFAULT_ICE: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.services.mozilla.com' },
 ]
 
 export class RtcEngine {
@@ -95,6 +97,16 @@ export class RtcEngine {
         // "closed" só ocorre quando fechamos localmente (pc.close()) — aí sim
         // removemos o participante.
         this.removePeer(id)
+      }
+    }
+
+    // Participantes em redes DIFERENTES dependem do ICE atravessar a NAT (STUN).
+    // Quando a camada de ICE cai sozinha ('failed'/'disconnected') sem derrubar a
+    // conexão inteira, reiniciamos só o transporte em vez de deixar a pessoa sumir.
+    pc.oniceconnectionstatechange = () => {
+      const st = pc.iceConnectionState
+      if (st === 'failed' || st === 'disconnected') {
+        setTimeout(() => this.restartIce(id), 600)
       }
     }
 
@@ -282,4 +294,3 @@ export class RtcEngine {
     return this.peers.size > 0
   }
 }
-
