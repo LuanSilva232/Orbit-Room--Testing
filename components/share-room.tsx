@@ -50,15 +50,19 @@ function InviteAlert({
   dismiss: () => void
 }) {
   const [left, setLeft] = useState(INVITE_ALERT_SECONDS)
+  // Guarda o dismiss em um ref para o cronômetro não ser reiniciado quando a
+  // tela re-renderizar por outros motivos (vídeo, estado da chamada etc).
+  const dismissRef = useRef(dismiss)
+  dismissRef.current = dismiss
 
   useEffect(() => {
     if (left <= 0) {
-      dismiss()
+      dismissRef.current()
       return
     }
     const t = setTimeout(() => setLeft((v) => v - 1), 1000)
     return () => clearTimeout(t)
-  }, [left, dismiss])
+  }, [left])
 
   return (
     <div className="pointer-events-auto w-[19rem] overflow-hidden rounded-2xl border border-white/10 bg-slate-900/90 p-3 shadow-2xl shadow-black/50 backdrop-blur">
