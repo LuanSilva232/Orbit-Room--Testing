@@ -1642,7 +1642,19 @@ export function ShareRoom() {
         setRemotePeers({ ...remotePeersRef.current })
       } else if (msg.type === 'channel-state') {
         const peers = msg.members.filter((m) => m.clientId !== clientIdRef.current)
-        peers.forEach((m) => engine.addPeer(m.clientId))
+        // Monta o card de quem já está na sala e cria a conexão com cada um —
+        // assim ninguém fica invisível enquanto o áudio ainda não chegou.
+        peers.forEach((m) => {
+          engine.addPeer(m.clientId)
+          const existing = remotePeersRef.current[m.clientId]
+          remotePeersRef.current = {
+            ...remotePeersRef.current,
+            [m.clientId]: existing
+              ? { ...existing, name: m.name, photo: m.photo }
+              : { name: m.name, photo: m.photo, streams: [] },
+          }
+        })
+        setRemotePeers({ ...remotePeersRef.current })
       } else if (msg.type === 'chat') {
         if (msg.message.channel !== channelRef.current) return
         if (seenChatRef.current.has(msg.message.id)) return
@@ -1897,7 +1909,22 @@ export function ShareRoom() {
         // mudo usa o "modo silencioso" nas configurações.
         await reacquire(false)
       }
-      res.data.members.forEach((m) => engineRef.current?.addPeer(m.clientId))
+      // Cria as conexões com quem já está na sala E monta o card de cada um na
+      // hora (nome/foto), para ninguém ficar invisível. Antes, o card só era
+      // montado quando o áudio da pessoa chegava — se o fluxo atrasasse ou não
+      // chegasse, quem já estava na sala sumia (fantasma), mesmo o contador
+      // mostrando a sala ocupada.
+      res.data.members.forEach((m) => {
+        engineRef.current?.addPeer(m.clientId)
+        const existing = remotePeersRef.current[m.clientId]
+        remotePeersRef.current = {
+          ...remotePeersRef.current,
+          [m.clientId]: existing
+            ? { ...existing, name: m.name, photo: m.photo }
+            : { name: m.name, photo: m.photo, streams: [] },
+        }
+      })
+      setRemotePeers({ ...remotePeersRef.current })
       setChat([])
       seenChatRef.current = new Set()
       const hist = await apiClient.get<{ messages: ChatMessage[] }>(
@@ -2507,6 +2534,21 @@ export function ShareRoom() {
           isScreen: hasVideo && screenIds.includes(videoId),
         })
       })
+      // Ainda sem mídia (áudio/vídeo não chegou): mostra o card de voz na hora,
+      // para o participante nunca ficar invisível. Vira mic/vídeo quando chega.
+      if (peer.streams.length === 0) {
+        tiles.push({
+          id: `remote-${peerId}-voice`,
+          name: peerName,
+          photo: peerPhoto,
+          stream: null,
+          hasVideo: false,
+          isLocal: false,
+          peerId,
+          muted: mutedPeers[peerId] ?? false,
+          isScreen: false,
+        })
+      }
     }
     // Telas simuladas (somente no modo administrador).
     if (isAdmin) {
