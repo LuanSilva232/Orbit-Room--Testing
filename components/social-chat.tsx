@@ -232,7 +232,7 @@ export function SocialChat({
   const canGoBack = openConv || review
 
   return (
-    <div className="relative flex h-full min-h-[26rem] flex-col overflow-hidden rounded-2xl share-panel-soft">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl share-panel-soft">
       {/* Cabeçalho. Dentro de uma conversa aberta, esconde o sino e a seta do
           topo — quem volta é a setinha da barrinha de informação do perfil. */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5">

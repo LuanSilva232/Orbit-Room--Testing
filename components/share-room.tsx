@@ -4768,7 +4768,7 @@ export function ShareRoom() {
               {/* Bate-papo social entre amigos */}
               {configPane === 'batepapo' && (
                 authUser ? (
-                  <section className="flex h-full flex-col">
+                  <section className="flex h-[70vh] flex-col lg:h-[62vh]">
                     <SocialChat
                       me={{ id: authUser.id, name: profile.name }}
                       onOpenProfile={(p) =>
