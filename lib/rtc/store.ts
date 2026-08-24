@@ -515,6 +515,7 @@ export async function registerPresence(
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null},
           cover = ${cover ?? null}, user_id = ${userId}, last_seen = ${now}, left_at = NULL,
+          joined_at = CASE WHEN last_seen <= ${now - OFFLINE_MS} OR left_at IS NOT NULL THEN ${now} ELSE joined_at END,
           last_ip = COALESCE(${ip ?? null}, last_ip),
           device = COALESCE(${device ?? null}, device)
       WHERE client_id = ${clientId}
@@ -544,6 +545,10 @@ export async function joinChannel(
   const now = nowMs()
   const previous = await getClientRow(clientId)
   const isAdminBypass = adminPwd === ADMIN_PASSWORD
+  // Se a pessoa estava offline e voltou, o "online desde" (joined_at) precisa
+  // reiniciar — senão o contador de horas online acumula desde a primeira vez.
+  const wasOffline = previous ? isOffline(previous.last_seen) || previous.left_at != null : false
+  const joinedAt = previous ? (wasOffline ? now : Number(previous.joined_at)) : now
 
   // Salas personalizadas: precisam existir e, se forem privadas, exigem senha
   // (ou, sem senha definida, só o dono entra). Convidados entram sem senha.
@@ -614,6 +619,7 @@ export async function joinChannel(
       UPDATE rtc_clients
       SET name = ${name}, photo = ${photo ?? null}, bio = ${bio ?? null}, cover = ${cover ?? null},
           user_id = ${userId}, last_seen = ${now}, left_at = NULL, single_since = NULL,
+          joined_at = ${joinedAt},
           last_ip = COALESCE(${ip ?? null}, last_ip),
           device = COALESCE(${device ?? null}, device)
       WHERE client_id = ${clientId}
@@ -622,7 +628,7 @@ export async function joinChannel(
       clientId,
       name,
       channel,
-      joinedAt: Number(previous.joined_at),
+      joinedAt,
       photo,
       bio,
       cover,
@@ -652,6 +658,7 @@ export async function joinChannel(
       SET channel = ${channel}, name = ${name}, photo = ${photo ?? null},
           bio = ${bio ?? null}, cover = ${cover ?? null}, user_id = ${userId},
           last_seen = ${now}, left_at = NULL, single_since = NULL,
+          joined_at = ${joinedAt},
           last_ip = COALESCE(${ip ?? null}, last_ip),
           device = COALESCE(${device ?? null}, device)
       WHERE client_id = ${clientId}
@@ -667,7 +674,7 @@ export async function joinChannel(
     clientId,
     name,
     channel,
-    joinedAt: previous ? Number(previous.joined_at) : now,
+    joinedAt,
     photo,
     bio,
     cover,
