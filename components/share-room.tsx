@@ -4006,35 +4006,14 @@ export function ShareRoom() {
 
       {/* Chat do canal */}
       <aside
-        className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-4 lg:col-start-1 lg:row-start-2 lg:min-h-0 ${
+        className={`share-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl p-4 lg:hidden ${
           mobileTab === 'chat' ? 'flex' : 'hidden'
-        } ${inicioView === 'home' ? 'lg:hidden' : 'lg:flex'}`}
+        }`}
       >
         {/* Aviso superior: pede para escolher uma das pastinhas */}
         <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500/10 to-fuchsia-500/10 px-3 py-2 text-xs text-slate-300 ring-1 ring-white/5">
           <span className="text-base">💬</span>
           <span>{t('chatChooseHint')}</span>
-        </div>
-
-        {/* Pastinhas: canais de voz (esquerda) | bate-papo social (direita) */}
-        <div className="mb-2 flex shrink-0 gap-1">
-          <button
-            onClick={() => setChatTab('canais')}
-            className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-xs font-semibold transition ${
-              chatTab === 'canais' ? 'bg-indigo-500/25 text-indigo-200 ring-1 ring-indigo-400/30' : 'text-slate-400 hover:bg-white/5'
-            }`}
-          >
-            <span className="text-lg">🎙️</span> {t('channelsVoice')}
-          </button>
-          <button
-            onClick={() => setChatTab('social')}
-            className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-xs font-semibold transition ${
-              chatTab === 'social' ? 'bg-fuchsia-500/25 text-fuchsia-200 ring-1 ring-fuchsia-400/30' : 'text-slate-400 hover:bg-white/5'
-            }`}
-          >
-            <span className="text-lg">💬</span> {t('socialFriends')}
-            {!authUser && <span className="absolute right-2 top-1 text-xs">🔒</span>}
-          </button>
         </div>
 
         {chatTab === 'canais' ? (
@@ -4268,6 +4247,27 @@ export function ShareRoom() {
             </div>
           )
         ) : null}
+
+        {/* Pastinhas do rodapé: canais de voz (esquerda) | bate-papo social (direita) */}
+        <div className="mt-2 flex shrink-0 gap-1">
+          <button
+            onClick={() => setChatTab('canais')}
+            className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-xs font-semibold transition ${
+              chatTab === 'canais' ? 'bg-indigo-500/25 text-indigo-200 ring-1 ring-indigo-400/30' : 'text-slate-400 hover:bg-white/5'
+            }`}
+          >
+            <span className="text-lg">🎙️</span> {t('channelsVoice')}
+          </button>
+          <button
+            onClick={() => setChatTab('social')}
+            className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-xs font-semibold transition ${
+              chatTab === 'social' ? 'bg-fuchsia-500/25 text-fuchsia-200 ring-1 ring-fuchsia-400/30' : 'text-slate-400 hover:bg-white/5'
+            }`}
+          >
+            <span className="text-lg">💬</span> {t('socialFriends')}
+            {!authUser && <span className="absolute right-2 top-1 text-xs">🔒</span>}
+          </button>
+        </div>
       </aside>
 
       {/* Modais */}

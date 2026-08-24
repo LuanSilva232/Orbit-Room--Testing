@@ -81,6 +81,13 @@ export function SocialChat({
   const openConvRef = useRef<ConversationSummary | null>(null)
   openConvRef.current = openConv
 
+  // Rolagem: mantém as mensagens contidas na caixa e desce sozinha até a última
+  // quando chega uma mensagem nova, para a conversa nunca estourar o painel.
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages, openConv])
+
   const loadSocial = useCallback(async () => {
     const [listRes, reqRes, friendsRes] = await Promise.all([
       apiClient.get<{ conversations: ConversationSummary[]; pending: PendingSummary[] }>('/api/social-chat?action=conversations'),
@@ -226,9 +233,10 @@ export function SocialChat({
 
   return (
     <div className="relative flex h-full min-h-[26rem] flex-col overflow-hidden rounded-2xl share-panel-soft">
-      {/* Cabeçalho */}
+      {/* Cabeçalho. Dentro de uma conversa aberta, esconde o sino e a seta do
+          topo — quem volta é a setinha da barrinha de informação do perfil. */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5">
-        {canGoBack ? (
+        {canGoBack && !openConv ? (
           <button
             onClick={() => {
               setOpenConv(null)
@@ -245,19 +253,21 @@ export function SocialChat({
             <span className="text-base">💬</span> {me ? 'Bate-papo social' : 'Bate-papo social'}
           </div>
         )}
-        <button
-          onClick={() => setShowNotif((v) => !v)}
-          className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-white/5 text-slate-300 transition hover:bg-white/10"
-          aria-label="Notificações"
-          title="Notificações"
-        >
-          🔔
-          {notifications.length > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
-              {notifications.length > 9 ? '+9' : notifications.length}
-            </span>
-          )}
-        </button>
+        {!openConv && (
+          <button
+            onClick={() => setShowNotif((v) => !v)}
+            className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-white/5 text-slate-300 transition hover:bg-white/10"
+            aria-label="Notificações"
+            title="Notificações"
+          >
+            📨
+            {notifications.length > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                {notifications.length > 9 ? '+9' : notifications.length}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* Conteúdo */}
@@ -331,21 +341,28 @@ export function SocialChat({
             {/* Cabeçalho da conversa */}
             <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/5 px-3 py-2.5">
               <button
-                onClick={() => openConversation({ ...openConv, unread: 0 })}
-                className="rounded-lg text-slate-400 transition hover:text-white"
+                onClick={() => {
+                  setOpenConv(null)
+                  setReview(null)
+                  void loadSocial()
+                }}
+                className="rounded-lg p-1 text-slate-400 transition hover:text-white"
+                aria-label="Voltar"
+                title="Voltar"
               >
                 ←
               </button>
-              <button
-                onClick={() => onOpenProfile({ userId: openConv.peer.id, name: openConv.peer.name, photo: openConv.peer.photo })}
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              >
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Avatar name={openConv.peer.name} photo={openConv.peer.photo} size="h-9 w-9" />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-bold">{openConv.peer.name}</span>
+                <button
+                  onClick={() => onOpenProfile({ userId: openConv.peer.id, name: openConv.peer.name, photo: openConv.peer.photo })}
+                  className="min-w-0 text-left"
+                  title="Ver perfil"
+                >
+                  <span className="block truncate text-sm font-bold hover:text-indigo-200">{openConv.peer.name}</span>
                   <span className="block text-[11px] text-emerald-300/80">online agora</span>
-                </span>
-              </button>
+                </button>
+              </div>
               <button
                 className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/10 hover:text-white"
                 aria-label="Mais opções"
@@ -379,6 +396,7 @@ export function SocialChat({
                   </div>
                 ))
               )}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Entrada de mensagem */}
@@ -451,7 +469,7 @@ export function SocialChat({
             title="Solicitações"
             aria-label="Solicitações de conversa"
           >
-            🔔
+            🤝
             {requests.length > 0 && (
               <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white">
                 {requests.length > 9 ? '+9' : requests.length}
