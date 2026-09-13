@@ -681,6 +681,15 @@ function reorientCameraStream(
     },
   }
 }
+// Identifica um stream remoto de TELA COMPARTILHADA. O id do vídeo propagado
+// pela mensagem "screen-kind" é a fonte confiável; quando essa mensagem ainda
+// não chegou (corrida de rede — o vídeo via WebRTC chega antes), usamos uma
+// heurística: tela costuma ter VÍDEO e NENHUM ÁUDIO (janela/aba sem som).
+// Assim o stream da tela nunca "engole" o microfone de quem está falando.
+function isScreenStream(stream: MediaStream, screenIds: string[]): boolean {
+  const videoId = stream.getVideoTracks()[0]?.id ?? ''
+  return videoId !== '' && (screenIds.includes(videoId) || stream.getAudioTracks().length === 0)
+}
 
 export function ShareRoom() {
   const [clientId, setClientId] = useState('')
@@ -1816,23 +1825,19 @@ export function ShareRoom() {
         onTrack: (peerId: string, stream: MediaStream) => {
           const prev = remotePeersRef.current[peerId]
           const screenIds = screenTrackIdsRef.current[peerId] ?? []
-          const videoId = stream.getVideoTracks()[0]?.id ?? ''
-          const isScreen = videoId !== '' && screenIds.includes(videoId)
+          const isScreen = isScreenStream(stream, screenIds)
           // Guarda no máx. um stream com o mesmo id (evita duplicar na lista).
-          let streams = (prev ? prev.streams : []).filter((s) => s.id !== stream.id)
+          const streams = (prev ? prev.streams : []).filter((s) => s.id !== stream.id)
           if (isScreen) {
             // Tela compartilhada: adiciona SEM apagar a câmera (o usuário pode
             // manter câmera + tela ligadas ao mesmo tempo).
             streams.push(stream)
           } else {
-            // Stream normal (câmera/mic): substitui o stream "normal" anterior
-            // (evita duplicar o perfil ao renegociar), mas preserva quaisquer
-            // telas que já estejam ativas.
-            const keptScreens = streams.filter((s) => {
-              const vid = s.getVideoTracks()[0]?.id ?? ''
-              return screenIds.includes(vid)
-            })
-            streams = [...keptScreens, stream]
+            // Stream normal (câmera/mic): ADICIONA sem apagar o stream de voz
+            // anterior. Se for uma renegociação da câmera, a antiga é removida
+            // pelo fim do track (onStreamGone). Se a tela com áudio de aba
+            // chegou antes do aviso "screen-kind", o microfone continua na lista.
+            streams.push(stream)
           }
           remotePeersRef.current = {
             ...remotePeersRef.current,
@@ -2807,7 +2812,6 @@ export function ShareRoom() {
       const peerPhoto = member?.photo || peer.photo
       peer.streams.forEach((stream) => {
         const hasVideo = stream.getVideoTracks().length > 0
-        const videoId = stream.getVideoTracks()[0]?.id ?? ''
         tiles.push({
           id: `remote-${peerId}-${stream.id}`,
           name: peerName,
@@ -2817,7 +2821,7 @@ export function ShareRoom() {
           isLocal: false,
           peerId,
           muted: mutedPeers[peerId] ?? false,
-          isScreen: hasVideo && screenIds.includes(videoId),
+          isScreen: isScreenStream(stream, screenIds),
         })
       })
       // Ainda sem mídia (áudio/vídeo não chegou): mostra o card de voz na hora,
@@ -2886,10 +2890,8 @@ export function ShareRoom() {
       const pname = member?.name || peer.name || 'Usuário'
       const pphoto = member?.photo || peer.photo
       const screenIds = screenTrackIdsRef.current[pid] ?? []
-      const audioStream = peer.streams.find((s) => {
-        const vid = s.getVideoTracks()[0]?.id ?? ''
-        return !screenIds.includes(vid)
-      })
+      const audioStream = peer.streams.find((s) => !isScreenStream(s, screenIds))
+
       list.push({
         id: `profile-${pid}`,
         name: pname,
@@ -2913,10 +2915,7 @@ export function ShareRoom() {
     const list: { id: string; peerId: string; stream: MediaStream; muted: boolean }[] = []
     for (const [pid, peer] of Object.entries(remotePeers)) {
       const screenIds = screenTrackIdsRef.current[pid] ?? []
-      const voice = peer.streams.find((s) => {
-        const vid = s.getVideoTracks()[0]?.id ?? ''
-        return !screenIds.includes(vid)
-      })
+      const voice = peer.streams.find((s) => !isScreenStream(s, screenIds))
       if (!voice) continue
       list.push({ id: `voice-${pid}`, peerId: pid, stream: voice, muted: mutedPeers[pid] ?? false })
     }
