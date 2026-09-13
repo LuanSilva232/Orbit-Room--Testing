@@ -2531,8 +2531,13 @@ export function ShareRoom() {
   }, [draft])
 
   const deleteChat = useCallback((messageId: string) => {
-    void apiClient.post('/api/rtc', { action: 'chat-delete', messageId })
-  }, [])
+    void apiClient.post('/api/rtc', {
+      action: 'chat-delete',
+      messageId,
+      authorId: clientIdRef.current,
+      ...(isAdmin ? { adminPwd: ADMIN_PASSWORD } : {}),
+    })
+  }, [isAdmin])
 
   // "Apagar para mim": remove apenas localmente (não avisa os outros).
   const deleteForMe = useCallback((messageId: string) => {
@@ -2543,6 +2548,7 @@ export function ShareRoom() {
     const res = await apiClient.post<{ cleared: number }>('/api/rtc', {
       action: 'chat-clear',
       channel: channelId,
+      ...(isAdmin ? { adminPwd: ADMIN_PASSWORD } : {}),
     })
     if (res.success) {
       if (channelId === channelRef.current) {
@@ -3068,6 +3074,7 @@ export function ShareRoom() {
                 action: 'admin-mute',
                 targetId: peerId,
                 muted: next,
+                adminPwd: ADMIN_PASSWORD,
               })
             }
           }}

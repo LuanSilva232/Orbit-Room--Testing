@@ -148,6 +148,7 @@ export async function listNotifications(meId: string): Promise<ChatNotification[
     JOIN users u ON u.id = n.from_id
     WHERE n.user_id = ${meId}
     ORDER BY n.created_at DESC
+    LIMIT 50
   `
   return rows.map((r) => ({
     id: r.id,
@@ -195,10 +196,15 @@ export async function sendConversationRequest(meId: string, toUserId: string, te
   const [existing] = await getSql()<ConvRow[]>`
     SELECT id, user_a, user_b, status, last_activity
     FROM social_conversations
-    WHERE user_a = ${meId} AND user_b = ${toUserId} AND status IN ('pending','active')
+    WHERE ((user_a = ${meId} AND user_b = ${toUserId}) OR (user_a = ${toUserId} AND user_b = ${meId}))
+      AND status IN ('pending','active')
   `
   if (existing) throw new AppError('Você já tem uma conversa com este amigo.', 409, 'CONV_EXISTS')
-
+// Limpa conversas recusadas antigas do mesmo par (só ocupam espaço).
+  await getSql()`
+    DELETE FROM social_conversations
+    WHERE ((user_a = ${meId} AND user_b = ${toUserId}) OR (user_a = ${toUserId} AND user_b = ${meId}))
+      AND status = 'declined'
   const now = Date.now()
   const id = `sc_${meId.slice(0, 6)}_${now}_${Math.floor(Math.random() * 1e6)}`
   await getSql()`

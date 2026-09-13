@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { handleApiError } from '@/lib/api-error-response'
-import { ValidationError } from '@/lib/errors'
+import { AppError, ValidationError } from '@/lib/errors'
 import * as store from '@/lib/rtc/store'
 import { getCurrentUser } from '@/lib/auth'
 import type {
@@ -177,13 +177,23 @@ export async function POST(req: Request) {
 
     if (action === 'chat-delete') {
       const messageId = typeof body.messageId === 'string' ? body.messageId : ''
+      const authorId = typeof body.authorId === 'string' ? body.authorId.trim() : ''
+      const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
       if (!messageId) throw new ValidationError('messageId é obrigatório')
-      return ok<{ deleted: boolean }>({ deleted: await store.deleteChat(messageId) })
+      return ok<{ deleted: boolean }>({
+        deleted: await store.deleteChat(messageId, {
+          requesterClientId: authorId || undefined,
+          admin: adminPwd === store.ADMIN_PASSWORD,
+        }),
+      })
     }
 
     if (action === 'chat-clear') {
       const channel = typeof body.channel === 'string' ? body.channel : 'sala-1'
+      const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
       if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      if (adminPwd !== store.ADMIN_PASSWORD)
+        throw new AppError('Só o administrador pode limpar o chat.', 403, 'ADMIN_REQUIRED')
       return ok<{ cleared: number }>({
         cleared: await store.clearChatChannel(channel as ChannelId),
       })
@@ -204,7 +214,10 @@ export async function POST(req: Request) {
 
     if (action === 'remove-member') {
       const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : ''
+      const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
       if (!clientId) throw new ValidationError('clientId é obrigatório')
+      if (adminPwd !== store.ADMIN_PASSWORD)
+        throw new AppError('Só o administrador pode remover membros.', 403, 'ADMIN_REQUIRED')
       return ok<{ removed: Member | undefined }>({
         removed: await store.removeOfflineMember(clientId),
       })
@@ -228,7 +241,10 @@ export async function POST(req: Request) {
     if (action === 'admin-mute') {
       const targetId = typeof body.targetId === 'string' ? body.targetId.trim() : ''
       const muted = body.muted === true
+      const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
       if (!targetId) throw new ValidationError('targetId é obrigatório')
+      if (adminPwd !== store.ADMIN_PASSWORD)
+        throw new AppError('Só o administrador pode mutar participantes.', 403, 'ADMIN_REQUIRED')
       await store.broadcastAdminMute(targetId, muted)
       return ok<{ muted: boolean }>({ muted })
     }

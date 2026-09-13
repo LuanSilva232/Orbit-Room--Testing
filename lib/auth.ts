@@ -212,9 +212,16 @@ export async function completeGoogleLogin(code: string, state: string): Promise<
       await tx`UPDATE users SET updated_at = ${now} WHERE id = ${uid}`
     } else {
       uid = randomStr(16)
+      // Gera um código de amigo que ainda não exista (colisão seria erro no banco).
+      let friendCode = generateFriendCode()
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const clash = await tx`SELECT 1 FROM users WHERE friend_code = ${friendCode}`
+        if (clash.length === 0) break
+        friendCode = generateFriendCode()
+      }
       await tx`
         INSERT INTO users (id, email, email_verified_at, status, display_name, bio, photo, rooms, friend_code, created_at, updated_at)
-        VALUES (${uid}, ${email}, ${now}, 'active', ${displayName}, null, ${picture}, '[]'::jsonb, ${generateFriendCode()}, ${now}, ${now})
+        VALUES (${uid}, ${email}, ${now}, 'active', ${displayName}, null, ${picture}, '[]'::jsonb, ${friendCode}, ${now}, ${now})
       `
     }
     await tx`

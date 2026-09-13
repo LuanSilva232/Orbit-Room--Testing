@@ -25,15 +25,26 @@ export async function GET() {
     showRoom: rows[0]?.privacy_show_room ?? true,
   }
   // Garante o código de amigo (contas criadas antes do recurso).
+  // O código é único no banco: gera até achar um que não esteja em uso.
   let friendCode = user.friendCode
   if (!friendCode) {
-    friendCode = generateFriendCode()
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const candidate = generateFriendCode()
+      const clash = await getSql()<{ c: string | number }[]>`
+        SELECT COUNT(*) AS c FROM users WHERE friend_code = ${candidate}
+      `
+      if (Number(clash[0]?.c ?? 0) === 0) {
+        friendCode = candidate
+        break
+      }
+    }
+    if (!friendCode) friendCode = generateFriendCode()
     await getSql()`
       UPDATE users SET friend_code = ${friendCode} WHERE id = ${user.id}
     `
   }
   const social = await getSql()<{ c: string | number }[]>`
-    SELECT COUNT(*) AS c FROM social_friends WHERE (user_a = ${user.id} OR user_b = ${user.id})
+    SELECT COUNT(*) AS c FROM social_friends WHERE user_a = ${user.id}
   `
   const friendsCount = Number(social[0]?.c ?? 0)
   return NextResponse.json({

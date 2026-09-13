@@ -158,6 +158,17 @@ export function ensureDb(): Promise<void> {
         ALTER TABLE users
           ADD COLUMN IF NOT EXISTS friend_code text
       `
+      // Código de amigo precisa ser ÚNICO (senão "adicionar por código" pode
+      // pegar a pessoa errada). Primeiro limpa duplicatas antigas (mantém o
+      // registro mais antigo), depois cria o índice único — idempotente.
+      await sql`
+        UPDATE users u SET friend_code = NULL
+        WHERE u.friend_code IS NOT NULL
+          AND u.id <> (SELECT MIN(id) FROM users u2 WHERE u2.friend_code = u.friend_code)
+      `
+      await sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS users_friend_code_key ON users (friend_code)
+      `
       await sql`
         ALTER TABLE users
           ADD COLUMN IF NOT EXISTS privacy_show_online boolean NOT NULL DEFAULT true
