@@ -2363,6 +2363,11 @@ export function ShareRoom() {
     const next = !micOn
     stream.getAudioTracks().forEach((t) => (t.enabled = next))
     setMicOn(next)
+    // Avisa os outros participantes que o microfone foi mutado/reativado,
+    // para o indicador 🔇 aparecer no card desta pessoa.
+    void apiClient
+      .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: !next })
+      .catch(() => undefined)
   }, [micOn, camOn, reacquire])
 
   const toggleCam = useCallback(async () => {
