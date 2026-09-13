@@ -96,4 +96,5 @@ export type MailboxMessage =
   | { id: number; type: 'chat-cleared'; channel: ChannelId }
   | { id: number; type: 'screen-kind'; from: string; trackIds: string[] }
   | { id: number; type: 'admin-mute'; targetId: string; muted: boolean }
+  | { id: number; type: 'peer-mute'; targetId: string; muted: boolean }
   | { id: number; type: 'kicked'; reason?: string }
