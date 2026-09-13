@@ -12,6 +12,7 @@ export type Member = {
   isAnonymous: boolean
   userId?: string
   device?: string
+  muted?: boolean
 }
 
 export type Room = {
