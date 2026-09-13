@@ -512,6 +512,7 @@ const STRINGS = {
   noiseEchoHint: ['Desligados por padrão para a voz sair natural e clara.', 'Off by default so your voice stays natural and clear.'],
   micSensitivity: ['Sensibilidade do microfone', 'Microphone sensitivity'],
   micSensitivityDesc: ['Ajusta o quanto o microfone capta. Desligado = som natural.', 'Adjusts how much the mic picks up. Off = natural sound.'],
+  micAutoHint: ['O microfone é ajustado automaticamente para a melhor qualidade — não precisa de configurações extras.', 'The microphone is automatically tuned for the best quality — no extra settings needed.'],
   cameraLabel: ['Câmera', 'Camera'],
   cameraEnhance: ['Melhorar nitidez', 'Enhance sharpness'],
   cameraEnhanceDesc: ['Deixa a imagem mais nítida e com mais qualidade na chamada.', 'Makes the image sharper and higher quality during calls.'],
@@ -1034,6 +1035,10 @@ export function ShareRoom() {
         // melhorar o áudio com eles desligados). Só desliga durante a sessão.
         saved.noiseSuppression = true
         saved.echoCancellation = true
+        // Sensibilidade do microfone sempre desligada: ligar/desligar ao vivo
+        // recaptura o microfone e pode mutar o áudio em alguns navegadores.
+        saved.micSensitivity = false
+        saved.micGain = 1
         return { ...DEFAULT_SETTINGS, ...saved }
       }
     } catch {
@@ -3074,7 +3079,6 @@ export function ShareRoom() {
                 action: 'admin-mute',
                 targetId: peerId,
                 muted: next,
-                adminPwd: ADMIN_PASSWORD,
               })
             }
           }}
@@ -4925,60 +4929,9 @@ export function ShareRoom() {
                   aria-label={t('volume')}
                 />
 
-                {/* Sensibilidade do microfone (acessibilidade) */}
-                <div className="mt-2 border-t border-white/5 pt-2">
-                  <SwitchRow
-                    checked={settings.micSensitivity}
-                    onChecked={(v) => setSetting('micSensitivity', v)}
-                    title={t('micSensitivity')}
-                    desc={t('micSensitivityDesc')}
-                  />
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-slate-400">{t('micVolume')}</span>
-                    <span className="text-xs tabular-nums text-slate-300">
-                      {Math.round(settings.micGain * 100)}%
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={50}
-                    max={200}
-                    value={Math.round(settings.micGain * 100)}
-                    onChange={(e) => setSetting('micGain', Number(e.target.value) / 100)}
-                    className="w-full accent-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={!settings.micSensitivity}
-                    aria-label={t('micVolume')}
-                  />
-                </div>
-
-                <p className="mt-2 text-[11px] leading-snug text-slate-300">{t('noiseEchoHint')}</p>
-                {(
-                  [
-                    ['noiseSuppression', t('noiseLabel')],
-                    ['echoCancellation', t('echoLabel')],
-                  ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    role="switch"
-                    aria-checked={settings[key]}
-                    onClick={() => setSetting(key, !settings[key])}
-                    className="flex w-full items-center justify-between py-1.5 text-left"
-                  >
-                    <span className="text-sm">{label}</span>
-                    <span
-                      className={`relative h-5 w-9 rounded-full transition ${
-                        settings[key] ? 'bg-emerald-500' : 'bg-slate-600'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
-                          settings[key] ? 'left-4' : 'left-0.5'
-                        }`}
-                      />
-                    </span>
-                  </button>
-                ))}
+                <p className="mt-2 text-[11px] leading-snug text-slate-300">
+                  {t('micAutoHint')}
+                </p>
               </section>
               )}
 
