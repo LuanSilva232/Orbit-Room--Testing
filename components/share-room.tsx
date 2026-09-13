@@ -1937,6 +1937,11 @@ export function ShareRoom() {
         setRemotePeers({ ...remotePeersRef.current })
       } else if (msg.type === 'channel-state') {
                 const peers = msg.members.filter((m) => m.clientId !== clientIdRef.current)
+        // Quem já estava com o microfone mutado permanece com o indicador 🔇
+        // (o estado fica salvo no servidor, então quem entra depois também vê).
+        msg.members.forEach((m) => {
+          if (m.muted) setMutedPeers((prev) => ({ ...prev, [m.clientId]: true }))
+        })
 
         // Monta o card de quem já está na sala e cria a conexão com cada um —
         // assim ninguém fica invisível enquanto o áudio ainda não chegou.
@@ -1993,6 +1998,11 @@ export function ShareRoom() {
         if (!res.success) return
         setOnlineMembers(res.data?.members ?? [])
         onlineMembersRef.current = res.data?.members ?? []
+        // Mantém o indicador 🔇 dos participantes cujo microfone está mutado
+        // (estado salvo no servidor — vale também para quem entra na sala depois).
+        ;(res.data?.members ?? []).forEach((m) => {
+          if (m.muted) setMutedPeers((prev) => ({ ...prev, [m.clientId]: true }))
+        })
         setOfflineMembers(res.data?.offlineMembers ?? [])
         // Prazo de exclusão (anônimos): sincroniza do servidor. Quem entrou com
         // Google usa o status da conta, então não sobrescreve pelo polling aqui.
@@ -2207,6 +2217,15 @@ export function ShareRoom() {
         // mudo usa o "modo silencioso" nas configurações.
          await reacquire(false)
       }
+      // Sincroniza o estado de mudo no servidor com o mic real (entrar no modo
+      // silencioso avisa os outros; entrar falando limpa um mudo antigo salvo).
+      void apiClient
+        .post('/api/rtc', {
+          action: 'peer-mute',
+          targetId: clientIdRef.current,
+          muted: settings.silentMode,
+        })
+        .catch(() => undefined)
       // Cria as conexões com quem já está na sala E monta o card de cada um na
       // hora (nome/foto), para ninguém ficar invisível. Antes, o card só era
       // montado quando o áudio da pessoa chegava — se o fluxo atrasasse ou não
