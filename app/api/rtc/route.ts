@@ -249,6 +249,15 @@ export async function POST(req: Request) {
       return ok<{ muted: boolean }>({ muted })
     }
 
+    if (action === 'peer-mute') {
+      // Auto-mudo: o próprio usuário avisa que desligou o microfone dele.
+      const targetId = typeof body.targetId === 'string' ? body.targetId.trim() : ''
+      const muted = body.muted === true
+      if (!targetId) throw new ValidationError('targetId é obrigatório')
+      await store.broadcastPeerMute(targetId, muted)
+      return ok<{ muted: boolean }>({ muted })
+    }
+
     throw new ValidationError('Ação inválida')
   } catch (error) {
     return handleApiError(error)
