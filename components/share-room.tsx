@@ -1969,7 +1969,7 @@ export function ShareRoom() {
           seenChatRef.current = new Set()
           setChat([])
         }
-      } else if (msg.type === 'admin-mute') {
+      } else if (msg.type === 'admin-mute' || msg.type === 'peer-mute') {
         setMutedPeers((prev) => ({ ...prev, [msg.targetId]: msg.muted }))
 
       } else if (msg.type === 'kicked') {
