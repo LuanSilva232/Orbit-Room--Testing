@@ -798,10 +798,19 @@ export async function addChat(
   return message
 }
 
-export async function deleteChat(messageId: string): Promise<boolean> {
+export async function deleteChat(
+  messageId: string,
+  opts: { requesterClientId?: string; admin?: boolean } = {}
+): Promise<boolean> {
   await ensureDb()
-  const rows = await getSql()<{ channel: string }[]>`SELECT channel FROM rtc_chat WHERE id = ${messageId}`
+  const rows = await getSql()<{ channel: string; member_id: string | null }[]>`
+    SELECT channel, member_id FROM rtc_chat WHERE id = ${messageId}
+  `
   if (rows.length === 0) return false
+  // Só o autor da mensagem (ou o administrador com senha) pode apagá-la.
+  if (!opts.admin && rows[0].member_id !== opts.requesterClientId) {
+    throw new AppError('Você só pode apagar as suas mensagens (ou com o modo administrador).', 403, 'NOT_ALLOWED')
+  }
   await getSql()`DELETE FROM rtc_chat WHERE id = ${messageId}`
   await notifyChannel(rows[0].channel as ChannelId, () => ({ type: 'chat-deleted', messageId }))
   return true

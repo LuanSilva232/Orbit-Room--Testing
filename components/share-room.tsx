@@ -2553,6 +2553,7 @@ export function ShareRoom() {
     const res = await apiClient.post<{ cleared: number }>('/api/rtc', {
       action: 'chat-clear',
       channel: channelId,
+      ...(isAdmin ? { adminPwd: ADMIN_PASSWORD } : {}),
     })
     if (res.success) {
       if (channelId === channelRef.current) {
@@ -2901,7 +2902,6 @@ export function ShareRoom() {
       const pphoto = member?.photo || peer.photo
       const screenIds = screenTrackIdsRef.current[pid] ?? []
       const audioStream = peer.streams.find((s) => !isScreenStream(s, screenIds))
-
       list.push({
         id: `profile-${pid}`,
         name: pname,
@@ -3074,10 +3074,11 @@ export function ShareRoom() {
             const next = !(mutedPeers[peerId] ?? false)
             setMutedPeers((prev) => ({ ...prev, [peerId]: next }))
             if (isAdmin) {
-              void apiClient.post('/api/rtc', {
+              vvoid apiClient.post('/api/rtc', {
                 action: 'admin-mute',
                 targetId: peerId,
                 muted: next,
+                adminPwd: ADMIN_PASSWORD,
               })
             }
           }}
@@ -4927,10 +4928,10 @@ export function ShareRoom() {
                   className="w-full accent-indigo-400"
                   aria-label={t('volume')}
                 />
-
                 <p className="mt-2 text-[11px] leading-snug text-slate-300">
                   {t('micAutoHint')}
                 </p>
+                
               </section>
               )}
 
