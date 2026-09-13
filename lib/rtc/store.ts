@@ -44,7 +44,6 @@ type ClientRow = {
   single_since: string | number | null
   user_id: string | null
   device: string | null
-  mic_muted: boolean
 }
 
 type TrackRow = { client_id: string; track_ids: string[] }
@@ -71,14 +70,14 @@ function toMember(r: ClientRow): Member {
     cover: r.cover ?? undefined,
     isAnonymous: !r.user_id,
     userId: r.user_id ?? undefined,
-    device: r.device ?? undefined,
-    muted: r.mic_muted === true,
+    ddevice: r.device ?? undefined,
   }
 }
 
 async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device, mic_muted, mic_muted, mic_muted, mic_muted
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device
+
     FROM rtc_clients WHERE client_id = ${clientId}
   `
   return rows[0]
@@ -86,7 +85,8 @@ async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
 
 async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
   return getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device, mic_muted, mic_muted, mic_muted, mic_muted
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device
+
     FROM rtc_clients
     WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - PRESENT_MS}
   `
