@@ -44,7 +44,6 @@ type ClientRow = {
   single_since: string | number | null
   user_id: string | null
   device: string | null
-  mic_muted: boolean
 }
 
 type TrackRow = { client_id: string; track_ids: string[] }
@@ -72,13 +71,12 @@ function toMember(r: ClientRow): Member {
     isAnonymous: !r.user_id,
     userId: r.user_id ?? undefined,
     device: r.device ?? undefined,
-    muted: r.mic_muted === true,
   }
 }
 
 async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device, mic_muted
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device
     FROM rtc_clients WHERE client_id = ${clientId}
   `
   return rows[0]
@@ -86,7 +84,7 @@ async function getClientRow(clientId: string): Promise<ClientRow | undefined> {
 
 async function channelRows(channel: ChannelId): Promise<ClientRow[]> {
   return getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device, mic_muted
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device
     FROM rtc_clients
     WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${nowMs() - PRESENT_MS}
   `
@@ -800,19 +798,10 @@ export async function addChat(
   return message
 }
 
-export async function deleteChat(
-  messageId: string,
-  opts: { requesterClientId?: string; admin?: boolean } = {}
-): Promise<boolean> {
+export async function deleteChat(messageId: string): Promise<boolean> {
   await ensureDb()
-  const rows = await getSql()<{ channel: string; member_id: string | null }[]>`
-    SELECT channel, member_id FROM rtc_chat WHERE id = ${messageId}
-  `
+  const rows = await getSql()<{ channel: string }[]>`SELECT channel FROM rtc_chat WHERE id = ${messageId}`
   if (rows.length === 0) return false
-  // Só o autor da mensagem (ou o administrador com senha) pode apagá-la.
-  if (!opts.admin && rows[0].member_id !== opts.requesterClientId) {
-    throw new AppError('Você só pode apagar as suas mensagens (ou com o modo administrador).', 403, 'NOT_ALLOWED')
-  }
   await getSql()`DELETE FROM rtc_chat WHERE id = ${messageId}`
   await notifyChannel(rows[0].channel as ChannelId, () => ({ type: 'chat-deleted', messageId }))
   return true
@@ -994,22 +983,5 @@ export async function broadcastAdminMute(targetId: string, muted: boolean): Prom
   `
   for (const r of rows) {
     await enqueueTo(r.client_id, { type: 'admin-mute', targetId, muted })
-  }
-}
-
-/**
- * Avisa o canal quando o próprio usuário alterna o microfone (auto-mudo).
- * O estado fica salvo no banco, para quem entrar depois já ver o indicador.
- */
-export async function broadcastPeerMute(targetId: string, muted: boolean): Promise<void> {
-  await ensureDb()
-  await getSql()`
-    UPDATE rtc_clients SET mic_muted = ${muted} WHERE client_id = ${targetId}
-  `
-  const rows = await getSql()<{ client_id: string }[]>`
-    SELECT client_id FROM rtc_clients WHERE left_at IS NULL
-  `
-  for (const r of rows) {
-    await enqueueTo(r.client_id, { type: 'peer-mute', targetId, muted })
   }
 }
