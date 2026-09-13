@@ -511,7 +511,8 @@ const STRINGS = {
   echoLabel: ['Eco', 'Echo'],
   noiseEchoHint: ['Desligados por padrão para a voz sair natural e clara.', 'Off by default so your voice stays natural and clear.'],
   micSensitivity: ['Sensibilidade do microfone', 'Microphone sensitivity'],
-   micSensitivityDesc: ['Ajusta o quanto o microfone capta. Desligado = som natural.', 'Adjusts how much the mic picks up. Off = natural sound.'],
+  micSensitivityDesc: ['Ajusta o quanto o microfone capta. Desligado = som natural.', 'Adjusts how much the mic picks up. Off = natural sound.'],
+  micAutoHint: ['O microfone é ajustado automaticamente para a melhor qualidade — não precisa de configurações extras.', 'The microphone is automatically tuned for the best quality — no extra settings needed.'],
   cameraLabel: ['Câmera', 'Camera'],
   cameraEnhance: ['Melhorar nitidez', 'Enhance sharpness'],
   cameraEnhanceDesc: ['Deixa a imagem mais nítida e com mais qualidade na chamada.', 'Makes the image sharper and higher quality during calls.'],
@@ -1034,6 +1035,10 @@ export function ShareRoom() {
         // melhorar o áudio com eles desligados). Só desliga durante a sessão.
         saved.noiseSuppression = true
         saved.echoCancellation = true
+        // Sensibilidade do microfone sempre desligada: ligar/desligar ao vivo
+        // recaptura o microfone e pode mutar o áudio em alguns navegadores.
+        saved.micSensitivity = false
+        saved.micGain = 1
         return { ...DEFAULT_SETTINGS, ...saved }
       }
     } catch {
@@ -1932,6 +1937,11 @@ export function ShareRoom() {
         setRemotePeers({ ...remotePeersRef.current })
       } else if (msg.type === 'channel-state') {
         const peers = msg.members.filter((m) => m.clientId !== clientIdRef.current)
+        // Quem já estava com o microfone mutado permanece com o indicador 🔇
+        // (o estado fica salvo no servidor, então quem entra depois também vê).
+        msg.members.forEach((m) => {
+          if (m.muted) setMutedPeers((prev) => ({ ...prev, [m.clientId]: true }))
+        })
         // Monta o card de quem já está na sala e cria a conexão com cada um —
         // assim ninguém fica invisível enquanto o áudio ainda não chegou.
         peers.forEach((m) => {
@@ -1958,7 +1968,7 @@ export function ShareRoom() {
           seenChatRef.current = new Set()
           setChat([])
         }
-      } else if (msg.type === 'admin-mute') {
+      } else if (msg.type === 'admin-mute' || msg.type === 'peer-mute') {
         setMutedPeers((prev) => ({ ...prev, [msg.targetId]: msg.muted }))
       } else if (msg.type === 'kicked') {
         // Foi desconectado por ficar sozinho no canal por 5 minutos (AFK).
@@ -1986,6 +1996,11 @@ export function ShareRoom() {
         if (!res.success) return
         setOnlineMembers(res.data?.members ?? [])
         onlineMembersRef.current = res.data?.members ?? []
+        // Mantém o indicador 🔇 dos participantes cujo microfone está mutado
+        // (estado salvo no servidor — vale também para quem entra na sala depois).
+        ;(res.data?.members ?? []).forEach((m) => {
+          if (m.muted) setMutedPeers((prev) => ({ ...prev, [m.clientId]: true }))
+        })
         setOfflineMembers(res.data?.offlineMembers ?? [])
         // Prazo de exclusão (anônimos): sincroniza do servidor. Quem entrou com
         // Google usa o status da conta, então não sobrescreve pelo polling aqui.
@@ -2200,6 +2215,15 @@ export function ShareRoom() {
         // mudo usa o "modo silencioso" nas configurações.
         await reacquire(false)
       }
+      // Sincroniza o estado de mudo no servidor com o mic real (entrar no modo
+      // silencioso avisa os outros; entrar falando limpa um mudo antigo salvo).
+      void apiClient
+        .post('/api/rtc', {
+          action: 'peer-mute',
+          targetId: clientIdRef.current,
+          muted: settings.silentMode,
+        })
+        .catch(() => undefined)
       // Cria as conexões com quem já está na sala E monta o card de cada um na
       // hora (nome/foto), para ninguém ficar invisível. Antes, o card só era
       // montado quando o áudio da pessoa chegava — se o fluxo atrasasse ou não
@@ -2354,8 +2378,13 @@ export function ShareRoom() {
       return
     }
     const next = !micOn
-    stream.getAudioTracks().forEach((t) => (t.enabled = next))
+    sstream.getAudioTracks().forEach((t) => (t.enabled = next))
     setMicOn(next)
+    // Avisa os outros participantes que o microfone foi mutado/reativado,
+    // para o indicador 🔇 aparecer no card desta pessoa.
+    void apiClient
+      .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: !next })
+      .catch(() => undefined)
   }, [micOn, camOn, reacquire])
 
   const toggleCam = useCallback(async () => {
@@ -2897,6 +2926,7 @@ export function ShareRoom() {
       const pphoto = member?.photo || peer.photo
       const screenIds = screenTrackIdsRef.current[pid] ?? []
       const audioStream = peer.streams.find((s) => !isScreenStream(s, screenIds))
+
       list.push({
         id: `profile-${pid}`,
         name: pname,
@@ -3069,11 +3099,10 @@ export function ShareRoom() {
             const next = !(mutedPeers[peerId] ?? false)
             setMutedPeers((prev) => ({ ...prev, [peerId]: next }))
             if (isAdmin) {
-              vvoid apiClient.post('/api/rtc', {
+              void apiClient.post('/api/rtc', {
                 action: 'admin-mute',
                 targetId: peerId,
                 muted: next,
-                adminPwd: ADMIN_PASSWORD,
               })
             }
           }}
@@ -4923,61 +4952,10 @@ export function ShareRoom() {
                   className="w-full accent-indigo-400"
                   aria-label={t('volume')}
                 />
-                {/* Sensibilidade do microfone (acessibilidade) */}
-                <div className="mt-2 border-t border-white/5 pt-2">
-                  <SwitchRow
-                    checked={settings.micSensitivity}
-                    onChecked={(v) => setSetting('micSensitivity', v)}
-                    title={t('micSensitivity')}
-                    desc={t('micSensitivityDesc')}
-                  />
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-slate-400">{t('micVolume')}</span>
-                    <span className="text-xs tabular-nums text-slate-300">
-                      {Math.round(settings.micGain * 100)}%
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={50}
-                    max={200}
-                    value={Math.round(settings.micGain * 100)}
-                    onChange={(e) => setSetting('micGain', Number(e.target.value) / 100)}
-                    className="w-full accent-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={!settings.micSensitivity}
-                    aria-label={t('micVolume')}
-                  />
-                </div>
 
-                <p className="mt-2 text-[11px] leading-snug text-slate-300">{t('noiseEchoHint')}</p>
-                {(
-                  [
-                    ['noiseSuppression', t('noiseLabel')],
-                    ['echoCancellation', t('echoLabel')],
-                  ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    role="switch"
-                    aria-checked={settings[key]}
-                    onClick={() => setSetting(key, !settings[key])}
-                    className="flex w-full items-center justify-between py-1.5 text-left"
-                  >
-                    <span className="text-sm">{label}</span>
-                    <span
-                      className={`relative h-5 w-9 rounded-full transition ${
-                        settings[key] ? 'bg-emerald-500' : 'bg-slate-600'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
-                          settings[key] ? 'left-4' : 'left-0.5'
-                        }`}
-                      />
-                    </span>
-                  </button>
-                ))}
-                
+                <p className="mt-2 text-[11px] leading-snug text-slate-300">
+                  {t('micAutoHint')}
+                </p>
               </section>
               )}
 
@@ -5883,4 +5861,3 @@ export function ShareRoom() {
     </div>
   )
 }
-
