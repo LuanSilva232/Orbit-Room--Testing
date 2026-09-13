@@ -70,7 +70,8 @@ function toMember(r: ClientRow): Member {
     cover: r.cover ?? undefined,
     isAnonymous: !r.user_id,
     userId: r.user_id ?? undefined,
-    ddevice: r.device ?? undefined,
+    device: r.device ?? undefined,
+    muted: r.mic_muted === true,
   }
 }
 
