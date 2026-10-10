@@ -3399,10 +3399,22 @@ export function ShareRoom() {
         } ${inicioView === 'home' ? 'lg:row-span-2' : ''} lg:flex`}
       >
         <div className="flex flex-col items-center px-1 pt-1 text-center">
+          <button
+            type="button"
+            title="Voltar ao início"
+            onClick={() => setInicioView('home')}
+            className="hidden transition-transform duration-150 hover:scale-105 lg:block"
+          >
+            <img
+              src="/logo.png"
+              alt="Orbit Room"
+              className="h-20 w-20 flex-none object-contain drop-shadow-2xl"
+            />
+          </button>
           <img
             src="/logo.png"
             alt="Orbit Room"
-            className="h-20 w-20 flex-none object-contain drop-shadow-2xl"
+            className="h-20 w-20 flex-none object-contain drop-shadow-2xl lg:hidden"
           />
           <h1 className="font-brand mt-2.5 bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-3xl font-bold uppercase tracking-[0.1em] text-transparent">
             Orbit Room
@@ -5863,4 +5875,3 @@ export function ShareRoom() {
     </div>
   )
 }
-
