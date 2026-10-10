@@ -66,8 +66,6 @@ export class RtcEngine {
       const track = event.track
       if (track) {
         if (!stream.getTracks().includes(track)) stream.addTrack(track)
-        // Quando o track é removido (ex.: câmera/tela desligada pelo remoto),
-        // limpa o stream e avisa o app se ele ficou vazio — evita "perfil duplicado".
         const drop = () => {
           if (!stream.getTracks().includes(track)) return
           stream.removeTrack(track)
@@ -88,21 +86,12 @@ export class RtcEngine {
       if (state === 'connected') {
         this.events.onPeerConnected(id)
       } else if (state === 'failed') {
-        // NÃO apaga o participante quando a conexão falha ao suspender o navegador
-        // (aba em segundo plano / Chrome minimizado): isso fazia a pessoa sumir da
-        // chamada. Em vez disso, tenta reiniciar o transporte (ICE) para recuperar
-        // o fluxo mantendo o card e o perfil no lugar.
         setTimeout(() => this.restartIce(id), 800)
       } else if (state === 'closed') {
-        // "closed" só ocorre quando fechamos localmente (pc.close()) — aí sim
-        // removemos o participante.
         this.removePeer(id)
       }
     }
 
-    // Participantes em redes DIFERENTES dependem do ICE atravessar a NAT (STUN).
-    // Quando a camada de ICE cai sozinha ('failed'/'disconnected') sem derrubar a
-    // conexão inteira, reiniciamos só o transporte em vez de deixar a pessoa sumir.
     pc.oniceconnectionstatechange = () => {
       const st = pc.iceConnectionState
       if (st === 'failed' || st === 'disconnected') {
@@ -110,6 +99,12 @@ export class RtcEngine {
       }
     }
 
+    // Perfect negotiation com rollback CORRETO.
+    // O bug anterior: quando havia colisão de offers (ambos mandam offer ao
+    // mesmo tempo), o peer "polite" tentava setRemoteDescription(offer) sem
+    // fazer rollback do seu próprio offer pendente. Isso fazia o
+    // setRemoteDescription falhar silenciosamente, e a negociação nunca
+    // completava para um dos lados — resultado: áudio unidirecional.
     pc.onnegotiationneeded = async () => {
       try {
         peer.makingOffer = true
@@ -148,6 +143,12 @@ export class RtcEngine {
       peer.ignoreOffer = !peer.polite && offerCollision
       if (peer.ignoreOffer) return
       try {
+        // ROLLBACK: se temos um offer local pendente, desfaz antes de aceitar
+        // o offer remoto. Sem isso, setRemoteDescription falha quando o estado
+        // é "have-local-offer" e o áudio fica unidirecional.
+        if (pc.signalingState === 'have-local-offer') {
+          await pc.setLocalDescription({ type: 'rollback' })
+        }
         await pc.setRemoteDescription(data as RTCSessionDescriptionInit)
         await pc.setLocalDescription()
         this.sendSignal({ to: from, kind: 'answer', data: pc.localDescription })
@@ -179,8 +180,6 @@ export class RtcEngine {
     }
   }
 
-  // Limita a taxa de bits de envio de uma trilha (evita travadas no upload
-  // durante o compartilhamento de tela em conexões mais lentas).
   async setTrackBitrate(track: MediaStreamTrack, maxBitrate: number): Promise<void> {
     for (const peer of this.peers.values()) {
       const sender = peer.pc.getSenders().find((s) => s.track === track)
@@ -211,9 +210,6 @@ export class RtcEngine {
     }
   }
 
-  // Liga/desliga a CÂMERA (trilha de vídeo) sem recriar o microfone. Usado ao
-  // alternar o vídeo: remove apenas o track de vídeo de todos os peers, deixando
-  // o áudio exatamente como estava.
   removeTrack(track: MediaStreamTrack): void {
     for (const peer of this.peers.values()) {
       const sender = peer.pc.getSenders().find((s) => s.track === track)
@@ -221,8 +217,6 @@ export class RtcEngine {
     }
   }
 
-  // Liga a CÂMERA (adiciona uma trilha de vídeo nova a todos os peers) mantendo
-  // o áudio atual, sem refazer o microfone.
   addTrack(track: MediaStreamTrack, stream: MediaStream): void {
     for (const peer of this.peers.values()) {
       if (peer.pc.getSenders().find((s) => s.track === track)) continue
@@ -230,9 +224,6 @@ export class RtcEngine {
     }
   }
 
-  // Reinicia apenas o transporte (ICE) de uma conexão existente, sem apagar o
-  // participante nem fechar a chamada. Usado quando a aba volta do segundo plano
-  // para re-estabelecer o fluxo de mídia que o navegador suspendeu.
   restartIce(id: string): void {
     const peer = this.peers.get(id)
     if (!peer) return
@@ -261,11 +252,6 @@ export class RtcEngine {
     this.events.onPeerGone(id)
   }
 
-  // Reconstrói a conexão WebRTC com um participante SEM apagar o card dele.
-  // Usado quando a aba volta do fundo (ex.: o usuário foi ao Instagram e o
-  // navegador suspendeu o batimento): fechamos a conexão antiga (que pode ter
-  // "morrido" enquanto a página estava em segundo plano) e abrimos uma nova,
-  // mantendo o perfil/foto/stream na tela.
   reconnect(id: string): void {
     if (id === this.myId) return
     const old = this.peers.get(id)
