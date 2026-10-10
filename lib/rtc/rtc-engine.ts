@@ -280,4 +280,3 @@ export class RtcEngine {
     return this.peers.size > 0
   }
 }
-

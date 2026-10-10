@@ -2958,6 +2958,23 @@ export function ShareRoom() {
     }
     return list
   }, [inCall, remotePeers, mutedPeers])
+  const remoteScreenAudio = useMemo(() => {
+    if (!inCall) return []
+    const list: { id: string; stream: MediaStream; muted: boolean }[] = []
+    for (const [pid, peer] of Object.entries(remotePeers)) {
+      const screenIds = screenTrackIdsRef.current[pid] ?? []
+      const screenStream = peer.streams.find((s) => isScreenStream(s, screenIds))
+      if (!screenStream) continue
+      if (screenStream.getAudioTracks().length === 0) continue
+      const tileId = `screen-${pid}`
+      list.push({
+        id: `screenaudio-${pid}`,
+        stream: screenStream,
+        muted: !!screenMuted[tileId],
+      })
+    }
+    return list
+  }, [inCall, remotePeers, screenMuted])
   // Câmeras ativas (inclui a minha) e se há telas/câmeras para exibir nas abas.
   const cameraTiles = tiles.filter((t) => !t.isScreen && t.hasVideo)
   const hasCameras = cameraTiles.length > 0
@@ -3312,6 +3329,19 @@ export function ShareRoom() {
         {/* Áudio fixo de todos os participantes: fica montado em qualquer aba para
             o som nunca cortar (mesmo em Câmeras/Telas que só mostram vídeos). */}
         {remoteVoice.map((v) => (
+          <audio
+            key={v.id}
+            autoPlay
+            playsInline
+            muted={v.muted}
+            className="hidden"
+            ref={(el) => bind(el, v.stream)}
+          />
+        ))}
+        {/* Áudio fixo das TELAS compartilhadas remotas: fica montado em qualquer
+            aba para o som da tela nunca cortar ao mutar o microfone ou trocar de
+            aba. O <video> na aba Telas fica mutado para não duplicar o som. */}
+        {remoteScreenAudio.map((v) => (
           <audio
             key={v.id}
             autoPlay
