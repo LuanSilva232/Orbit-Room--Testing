@@ -2379,7 +2379,7 @@ export function ShareRoom() {
     const next = !micOn
     if (next) {
       // Desmutar: readquire o microfone (o hardware foi parado ao mutar) e
-      // substitui a trilha nos peers sem renegociação.
+      // substitui a trilha nos senders existentes sem renegociação.
       if (!localStreamRef.current) {
         void reacquire(camOn)
         setMicOn(true)
@@ -2404,19 +2404,52 @@ export function ShareRoom() {
           return
         }
         const local = localStreamRef.current
+        // Remove a trilha antiga (parada) do stream local.
         const oldTrack = local.getAudioTracks()[0]
         if (oldTrack) local.removeTrack(oldTrack)
-        local.addTrack(newTrack)
-        micSourceRef.current = stream
-        // Reaplica o ganho se a sensibilidade estiver ligada.
-        const outgoing = applyMicGain(local)
-        if (outgoing !== local) {
-          replaceLocalStream(outgoing)
+
+        let trackForEngine: MediaStreamTrack = newTrack
+
+        // Se a sensibilidade estiver ligada, cria a cadeia WebAudio para ganho.
+        // Fazemos manualmente (em vez de applyMicGain) para evitar que ele
+        // pare o stream novo (micSourceRef) e para não criar um stream novo
+        // que gere senders duplicados via replaceLocalStream.
+        if (settings.micSensitivity) {
+          const ctx = ensureAudioCtx()
+          if (ctx) {
+            if (micGainRef.current) {
+              try {
+                micGainRef.current.source.disconnect()
+                micGainRef.current.gain.disconnect()
+                micGainRef.current.dest.disconnect()
+              } catch {
+                /* noop */
+              }
+            }
+            micSourceRef.current = stream
+            const source = ctx.createMediaStreamSource(stream)
+            const gain = ctx.createGain()
+            gain.gain.value = settings.micGain
+            const dest = ctx.createMediaStreamDestination()
+            source.connect(gain).connect(dest)
+            micGainRef.current = { source, gain, dest }
+            const processedTrack = dest.stream.getAudioTracks()[0]
+            if (processedTrack) trackForEngine = processedTrack
+          } else {
+            micSourceRef.current = stream
+          }
         } else {
-          setLocalMediaStream(local)
+          micSourceRef.current = stream
         }
-        const trackForEngine = outgoing.getAudioTracks()[0] ?? newTrack
-        engine?.unmuteMicAudio(trackForEngine, outgoing)
+
+        // Coloca a trilha final (crua ou processada) no stream local existente.
+        local.addTrack(trackForEngine)
+        // Garante estado de habilitado coerente.
+        trackForEngine.enabled = true
+
+        // Substitui null nos senders existentes (sem renegociação).
+        engine?.unmuteMicAudio(trackForEngine, local)
+        setLocalMediaStream(local)
         setMicOn(true)
         void apiClient
           .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: false })
@@ -2440,14 +2473,16 @@ export function ShareRoom() {
       if (micSourceRef.current) {
         try {
           micSourceRef.current.getAudioTracks().forEach((t) => t.stop())
-        } catch { /* noop */ }
+        } catch {
+          /* noop */
+        }
       }
       setMicOn(false)
       void apiClient
         .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: true })
         .catch(() => undefined)
     }
-  }, [micOn, camOn, reacquire, applyMicGain, replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity])
+  }, [micOn, camOn, reacquire, ensureAudioCtx, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity, settings.micGain])
 
   const toggleCam = useCallback(async () => {
     const now = Date.now()

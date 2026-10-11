@@ -267,8 +267,13 @@ export class RtcEngine {
         void muted.replaceTrack(newTrack)
         continue
       }
-      // Peer entrou enquanto o mic estava mutado: sender tem trilha "ended".
-      const dead = senders.find((s) => s.track && s.track.kind === 'audio' && s.track.readyState === 'ended')
+      // Sender de áudio com trilha null (foi mutado mas o Set foi limpo) ou
+      // trilha "ended" (peer entrou enquanto o mic estava parado).
+      const dead = senders.find(
+        (s) =>
+          s.track === null ||
+          (s.track && s.track.kind === 'audio' && s.track.readyState === 'ended')
+      )
       if (dead) {
         void dead.replaceTrack(newTrack)
         continue
