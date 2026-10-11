@@ -1701,13 +1701,15 @@ export function ShareRoom() {
         // O ganho automático só liga quando alguma opção de tratamento estiver
         // ativa — desligado, a voz sai natural e sem abafar.
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: settings.echoCancellation,
-            noiseSuppression: settings.noiseSuppression,
-            autoGainControl:
-              !settings.micSensitivity &&
-              (settings.echoCancellation || settings.noiseSuppression),
-          },
+          audio: keepMicMuted
+            ? false
+            : {
+                echoCancellation: settings.echoCancellation,
+                noiseSuppression: settings.noiseSuppression,
+                autoGainControl:
+                  !settings.micSensitivity &&
+                  (settings.echoCancellation || settings.noiseSuppression),
+              },
           video: withVideo ? videoConstraints : false,
         })
         // Se o microfone estava mudo, mantém mudo ao ativar câmera/tela.

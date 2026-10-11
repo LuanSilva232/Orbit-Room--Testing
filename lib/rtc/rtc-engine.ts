@@ -200,11 +200,21 @@ export class RtcEngine {
   removeLocalStream(stream: MediaStream): void {
     const idx = this.localStreams.indexOf(stream)
     if (idx >= 0) this.localStreams.splice(idx, 1)
+    const trackIds = new Set(stream.getTracks().map((t) => t.id))
     for (const peer of this.peers.values()) {
       const senders = peer.pc.getSenders()
       for (const sender of senders) {
-        if (sender.track && stream.getTracks().includes(sender.track)) {
+        if (sender.track && trackIds.has(sender.track.id)) {
           peer.pc.removeTrack(sender)
+          this.mutedMicSenders.delete(sender)
+        }
+      }
+      // Limpa senders de áudio com trilha null que pertenciam ao stream
+      // mutado — senão ficam órfãos e o próximo addLocalStream duplica o áudio.
+      for (const sender of senders) {
+        if (this.mutedMicSenders.has(sender) && sender.track === null) {
+          peer.pc.removeTrack(sender)
+          this.mutedMicSenders.delete(sender)
         }
       }
     }
@@ -316,6 +326,7 @@ export class RtcEngine {
       this.removePeer(id)
     }
     this.localStreams = []
+    this.mutedMicSenders.clear()
   }
 
   hasPeer(id: string): boolean {
