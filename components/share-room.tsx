@@ -1155,7 +1155,13 @@ export function ShareRoom() {
           ? window.AudioContext ||
             (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
           : undefined
-      if (Ctor) audioCtxRef.current = new Ctor()
+      if (Ctor) {
+        try {
+          audioCtxRef.current = new Ctor({ latencyHint: 'interactive' })
+        } catch {
+          audioCtxRef.current = new Ctor()
+        }
+      }
     }
     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
       void audioCtxRef.current.resume()
@@ -2449,6 +2455,18 @@ export function ShareRoom() {
 
         // Substitui null nos senders existentes (sem renegociação).
         engine?.unmuteMicAudio(trackForEngine, local)
+        // Invalida o analisador de voz do stream local: a trilha de áudio foi
+        // trocada, e o analisador antigo continua preso à trilha morta. Removê-lo
+        // aqui faz o useEffect de detecção recriá-lo para a trilha nova.
+        const localId = local.id
+        if (localId) {
+          try {
+            analysersRef.current.get(localId)?.disconnect()
+          } catch {
+            /* noop */
+          }
+          analysersRef.current.delete(localId)
+        }
         setLocalMediaStream(local)
         setMicOn(true)
         void apiClient
@@ -3243,8 +3261,8 @@ export function ShareRoom() {
       try {
         const source = ctx.createMediaStreamSource(tile.stream)
         const analyser = ctx.createAnalyser()
-        analyser.fftSize = 512
-        analyser.smoothingTimeConstant = 0.3
+        analyser.fftSize = 256
+        analyser.smoothingTimeConstant = 0.15
         source.connect(analyser)
         analysersRef.current.set(tile.stream.id, analyser)
       } catch {
@@ -3298,7 +3316,7 @@ export function ShareRoom() {
         speakersRef.current = next
         setSpeakers(next)
       }
-    }, 230)
+    }, 120)
     return () => window.clearInterval(timer)
   }, [tiles, micOn, mutedPeers])
 
