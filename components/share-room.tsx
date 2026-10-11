@@ -2502,6 +2502,12 @@ export function ShareRoom() {
       const micTrackIds = audioTracks.map((t) => t.id)
       audioTracks.forEach((t) => { t.enabled = false; t.stop() })
       engine?.muteMicAudio(micTrackIds)
+      // Remove as trilhas de áudio paradas do stream local para que novos
+      // peers não as recebam via addPeer/addLocalStream. Sem isso, a trilha
+      // mutada continua no stream e pode ser enviada a peers que conectam
+      // depois do mudo (causando eco/retorno na tela compartilhada).
+      audioTracks.forEach((t) => local.removeTrack(t))
+      setLocalMediaStream(local)
       // Se a sensibilidade estava ligada, também para o stream original.
       if (micSourceRef.current) {
         try {
@@ -2559,25 +2565,32 @@ export function ShareRoom() {
       }
       const vstream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints })
       if (!local) {
-        // Não havia stream local ainda (ex.: sem microfone) — recria com áudio+vídeo.
-        const audioStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: settings.echoCancellation,
-            noiseSuppression: settings.noiseSuppression,
-            autoGainControl:
-              !settings.micSensitivity &&
-              (settings.echoCancellation || settings.noiseSuppression),
-          },
-        })
-        const merged = new MediaStream([
-          ...audioStream.getAudioTracks(),
-          ...vstream.getVideoTracks(),
-        ])
-        vstream.getTracks().forEach((t) => t.stop())
-        const outgoing = applyMicGain(merged)
-        replaceLocalStream(outgoing)
+        // Não havia stream local ainda (ex.: sem microfone) — cria com vídeo.
+        // Se o mic estava mutado, NÃO pede áudio (evita reativar o microfone
+        // da pessoa mutada e causar eco na tela compartilhada).
+        if (micOn) {
+          const audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: settings.echoCancellation,
+              noiseSuppression: settings.noiseSuppression,
+              autoGainControl:
+                !settings.micSensitivity &&
+                (settings.echoCancellation || settings.noiseSuppression),
+            },
+          })
+          const merged = new MediaStream([
+            ...audioStream.getAudioTracks(),
+            ...vstream.getVideoTracks(),
+          ])
+          vstream.getTracks().forEach((t) => t.stop())
+          const outgoing = applyMicGain(merged)
+          replaceLocalStream(outgoing)
+        } else {
+          const outgoing = new MediaStream([...vstream.getVideoTracks()])
+          vstream.getTracks().forEach((t) => t.stop())
+          replaceLocalStream(outgoing)
+        }
         setCamOn(true)
-        setMicOn(!micOn)
         applyQualityToStreams(settings.defaultQuality)
         return
       }
