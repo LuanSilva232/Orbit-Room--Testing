@@ -114,8 +114,11 @@ export async function POST(req: Request) {
       const bio = typeof body.bio === 'string' ? body.bio : undefined
       const cover = typeof body.cover === 'string' ? body.cover : undefined
       const password = typeof body.password === 'string' ? body.password.trim() : ''
+      const device = typeof body.device === 'string' ? body.device : undefined
+      const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
       if (!clientId) throw new ValidationError('clientId é obrigatório')
-      if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      if (!(await store.isChannel(channel))) throw new ValidationError('Canal inválido')
+      const user = await getCurrentUser()
       const result = await store.joinChannel(
         clientId,
         name,
@@ -123,9 +126,11 @@ export async function POST(req: Request) {
         bio,
         cover,
         channel as ChannelId,
+        user?.id ?? null,
         null,
-        null,
-        password
+        password,
+        device,
+        adminPwd
       )
       return ok<{ channel: ChannelId; members: Member[] }>({
         channel: result.channel,
@@ -168,11 +173,12 @@ export async function POST(req: Request) {
       const type = body.type === 'voice' ? 'voice' : undefined
       const audioUrl = typeof body.audioUrl === 'string' ? body.audioUrl : undefined
       if (!text) throw new ValidationError('Mensagem vazia')
+      const user = await getCurrentUser()
       return ok<{ message: ChatMessage }>({
         message: await store.addChat(channel as ChannelId, authorId, author, text, {
           type,
           audioUrl,
-        }),
+        }, user?.id ?? null),
       })
     }
 
@@ -192,7 +198,7 @@ export async function POST(req: Request) {
     if (action === 'chat-clear') {
       const channel = typeof body.channel === 'string' ? body.channel : 'sala-1'
       const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
-      if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      if (!(await store.isChannel(channel))) throw new ValidationError('Canal inválido')
       if (adminPwd !== store.ADMIN_PASSWORD)
         throw new AppError('Só o administrador pode limpar o chat.', 403, 'ADMIN_REQUIRED')
       return ok<{ cleared: number }>({

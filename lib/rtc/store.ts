@@ -235,7 +235,7 @@ export async function onlineMembers(): Promise<Member[]> {
   await ensureDb()
   await runMaintenance()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device, mic_muted
     FROM rtc_clients WHERE last_seen > ${nowMs() - PRESENT_MS}
   `
   return rows.map(toMember)
@@ -246,7 +246,7 @@ export async function offlineMembers(): Promise<Member[]> {
   await ensureDb()
   await runMaintenance()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device, mic_muted
     FROM rtc_clients WHERE last_seen <= ${nowMs() - OFFLINE_MS}
   `
   return rows.map(toMember)
@@ -597,7 +597,7 @@ export async function joinChannel(
   if ((await isPublicChannel(channel)) && previous?.channel !== channel) {
     const active = await getSql()<{ c: string | number }[]>`
       SELECT COUNT(*) AS c FROM rtc_clients
-      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${now - ANON_OFFLINE_MS}
+      WHERE channel = ${channel} AND left_at IS NULL AND last_seen > ${now - PRESENT_MS}
     `
     if (Number(active[0]?.c ?? 0) >= MAX_PUBLIC_MEMBERS) {
       throw new AppError(
@@ -941,7 +941,7 @@ export async function removeOfflineMember(clientId: string): Promise<Member | un
 export async function removeAllOffline(): Promise<Member[]> {
   await ensureDb()
   const rows = await getSql()<ClientRow[]>`
-    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id
+    SELECT client_id, name, photo, bio, cover, channel, joined_at, last_seen, left_at, single_since, user_id, device, mic_muted
     FROM rtc_clients
     WHERE left_at IS NOT NULL OR last_seen <= ${nowMs() - OFFLINE_MS}
   `

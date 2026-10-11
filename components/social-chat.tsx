@@ -250,7 +250,7 @@ export function SocialChat({
           </button>
         ) : (
           <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-200">
-            <span className="text-base">💬</span> {me ? 'Bate-papo social' : 'Bate-papo social'}
+            <span className="text-base">💬</span> Bate-papo social
           </div>
         )}
         {!openConv && (

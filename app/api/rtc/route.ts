@@ -95,7 +95,7 @@ export async function POST(req: Request) {
       const device = typeof body.device === 'string' ? body.device : undefined
       const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
       if (!clientId) throw new ValidationError('clientId é obrigatório')
-      if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      if (!(await store.isChannel(channel))) throw new ValidationError('Canal inválido')
       const user = await getCurrentUser()
       const result = await store.joinChannel(
         clientId,
@@ -191,7 +191,7 @@ export async function POST(req: Request) {
     if (action === 'chat-clear') {
       const channel = typeof body.channel === 'string' ? body.channel : 'sala-1'
       const adminPwd = typeof body.adminPwd === 'string' ? body.adminPwd.trim() : ''
-      if (!store.isChannel(channel)) throw new ValidationError('Canal inválido')
+      if (!(await store.isChannel(channel))) throw new ValidationError('Canal inválido')
       if (adminPwd !== store.ADMIN_PASSWORD)
         throw new AppError('Só o administrador pode limpar o chat.', 403, 'ADMIN_REQUIRED')
       return ok<{ cleared: number }>({

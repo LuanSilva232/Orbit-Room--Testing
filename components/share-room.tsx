@@ -2190,6 +2190,7 @@ export function ShareRoom() {
           name: nameRef.current,
           photo: profileRef.current.photo,
           bio: profileRef.current.bio,
+          cover: profileRef.current.cover,
           channel: channelId,
           password: password ?? '',
           device: isMobileDevice ? 'mobile' : 'desktop',
@@ -3122,6 +3123,7 @@ export function ShareRoom() {
                 action: 'admin-mute',
                 targetId: peerId,
                 muted: next,
+                ...(isAdmin ? { adminPwd: ADMIN_PASSWORD } : {}),
               })
             }
           }}
