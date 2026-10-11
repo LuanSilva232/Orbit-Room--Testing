@@ -240,6 +240,45 @@ export class RtcEngine {
     }
   }
 
+  // ----- Mudo real do microfone (separado do áudio da tela) -----
+  // Salva os senders de áudio mutados para restaurá-los depois.
+  private mutedMicSenders = new Set<RTCRtpSender>()
+
+  /** Substitui a trilha de áudio do mic por null em todos os peers (sem renegociação). */
+  muteMicAudio(): void {
+    this.mutedMicSenders.clear()
+    for (const peer of this.peers.values()) {
+      for (const sender of peer.pc.getSenders()) {
+        if (sender.track && sender.track.kind === 'audio') {
+          void sender.replaceTrack(null)
+          this.mutedMicSenders.add(sender)
+        }
+      }
+    }
+  }
+
+  /** Restaura a trilha de áudio do mic em todos os peers (sem renegociação). */
+  unmuteMicAudio(newTrack: MediaStreamTrack, stream: MediaStream): void {
+    for (const peer of this.peers.values()) {
+      const senders = peer.pc.getSenders()
+      // Peer já estava na chamada quando o mic foi mutado: sender está no Set.
+      const muted = senders.find((s) => this.mutedMicSenders.has(s))
+      if (muted) {
+        void muted.replaceTrack(newTrack)
+        continue
+      }
+      // Peer entrou enquanto o mic estava mutado: sender tem trilha "ended".
+      const dead = senders.find((s) => s.track && s.track.kind === 'audio' && s.track.readyState === 'ended')
+      if (dead) {
+        void dead.replaceTrack(newTrack)
+        continue
+      }
+      // Nenhum sender de áudio existe (trilha foi removida do stream): adiciona.
+      peer.pc.addTrack(newTrack, stream)
+    }
+    this.mutedMicSenders.clear()
+  }
+
   removePeer(id: string): void {
     const peer = this.peers.get(id)
     if (!peer) return

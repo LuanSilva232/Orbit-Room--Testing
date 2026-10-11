@@ -2374,21 +2374,80 @@ export function ShareRoom() {
     }
   }, [kickNotice, leaveChannel])
 
-  const toggleMic = useCallback(() => {
-    const stream = localStreamRef.current
-    if (!stream) {
-      void reacquire(camOn)
-      return
-    }
+  const toggleMic = useCallback(async () => {
+    const engine = engineRef.current
     const next = !micOn
-    stream.getAudioTracks().forEach((t) => (t.enabled = next))
-    setMicOn(next)
-    // Avisa os outros participantes que o microfone foi mutado/reativado,
-    // para o indicador 🔇 aparecer no card desta pessoa.
-    void apiClient
-      .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: !next })
-      .catch(() => undefined)
-  }, [micOn, camOn, reacquire])
+    if (next) {
+      // Desmutar: readquire o microfone (o hardware foi parado ao mutar) e
+      // substitui a trilha nos peers sem renegociação.
+      if (!localStreamRef.current) {
+        void reacquire(camOn)
+        setMicOn(true)
+        void apiClient
+          .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: false })
+          .catch(() => undefined)
+        return
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: settings.echoCancellation,
+            noiseSuppression: settings.noiseSuppression,
+            autoGainControl:
+              !settings.micSensitivity &&
+              (settings.echoCancellation || settings.noiseSuppression),
+          },
+        })
+        const newTrack = stream.getAudioTracks()[0]
+        if (!newTrack) {
+          toast.error('Não foi possível acessar o microfone')
+          return
+        }
+        const local = localStreamRef.current
+        const oldTrack = local.getAudioTracks()[0]
+        if (oldTrack) local.removeTrack(oldTrack)
+        local.addTrack(newTrack)
+        micSourceRef.current = stream
+        // Reaplica o ganho se a sensibilidade estiver ligada.
+        const outgoing = applyMicGain(local)
+        if (outgoing !== local) {
+          replaceLocalStream(outgoing)
+        } else {
+          setLocalMediaStream(local)
+        }
+        const trackForEngine = outgoing.getAudioTracks()[0] ?? newTrack
+        engine?.unmuteMicAudio(trackForEngine, outgoing)
+        setMicOn(true)
+        void apiClient
+          .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: false })
+          .catch(() => undefined)
+      } catch {
+        toast.error('Não foi possível acessar o microfone')
+      }
+    } else {
+      // Mutar: para o hardware do microfone (track.stop) para garantir que
+      // nenhum áudio do mic vaze pelo stream da tela compartilhada, e substitui
+      // a trilha nos peers por null (sem renegociação).
+      const local = localStreamRef.current
+      if (!local) {
+        setMicOn(false)
+        return
+      }
+      const audioTracks = local.getAudioTracks()
+      audioTracks.forEach((t) => { t.enabled = false; t.stop() })
+      engine?.muteMicAudio()
+      // Se a sensibilidade estava ligada, também para o stream original.
+      if (micSourceRef.current) {
+        try {
+          micSourceRef.current.getAudioTracks().forEach((t) => t.stop())
+        } catch { /* noop */ }
+      }
+      setMicOn(false)
+      void apiClient
+        .post('/api/rtc', { action: 'peer-mute', targetId: clientIdRef.current, muted: true })
+        .catch(() => undefined)
+    }
+  }, [micOn, camOn, reacquire, applyMicGain, replaceLocalStream, settings.echoCancellation, settings.noiseSuppression, settings.micSensitivity])
 
   const toggleCam = useCallback(async () => {
     const now = Date.now()
