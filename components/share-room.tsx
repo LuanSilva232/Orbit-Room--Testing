@@ -2497,8 +2497,9 @@ export function ShareRoom() {
         return
       }
       const audioTracks = local.getAudioTracks()
+      const micTrackIds = audioTracks.map((t) => t.id)
       audioTracks.forEach((t) => { t.enabled = false; t.stop() })
-      engine?.muteMicAudio()
+      engine?.muteMicAudio(micTrackIds)
       // Se a sensibilidade estava ligada, também para o stream original.
       if (micSourceRef.current) {
         try {

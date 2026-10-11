@@ -244,12 +244,14 @@ export class RtcEngine {
   // Salva os senders de áudio mutados para restaurá-los depois.
   private mutedMicSenders = new Set<RTCRtpSender>()
 
-  /** Substitui a trilha de áudio do mic por null em todos os peers (sem renegociação). */
-  muteMicAudio(): void {
+  /** Substitui a trilha de áudio do mic por null em todos os peers (sem renegociação).
+   *  Recebe os IDs das trilhas de áudio do MIC para NÃO mutar o áudio da tela. */
+  muteMicAudio(micTrackIds: string[]): void {
+    const idSet = new Set(micTrackIds)
     this.mutedMicSenders.clear()
     for (const peer of this.peers.values()) {
       for (const sender of peer.pc.getSenders()) {
-        if (sender.track && sender.track.kind === 'audio') {
+        if (sender.track && sender.track.kind === 'audio' && idSet.has(sender.track.id)) {
           void sender.replaceTrack(null)
           this.mutedMicSenders.add(sender)
         }
@@ -324,4 +326,3 @@ export class RtcEngine {
     return this.peers.size > 0
   }
 }
- 
