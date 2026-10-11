@@ -3154,13 +3154,12 @@ export function ShareRoom() {
         <video
           autoPlay
           playsInline
-          // Som de câmera remota vem do bloco de áudio fixo (remoteVoice);
-          // aqui muto o vídeo para não duplicar. Telas compartilhadas seguem
-          // com o próprio som (screenMuted).
-          muted={tile.isLocal || (tile.isScreen ? !!screenMuted[tile.id] : true)}
-          // Filtro de cor/contraste só quando o usuário ligar "Cores vívidas" nas
-          // configurações. Filtro em <video> força o processador gráfico a recompor
-          // todo quadro e esquenta no celular; por isso fica desligado por padrão.
+          // Todos os vídeos ficam sempre mutados: o áudio vem dos blocos fixos
+          // remoteVoice (câmera) e remoteScreenAudio (tela), que ficam montados
+          // em qualquer aba. Isso evita que o <video> e o <audio> hidden
+          // compitam pelo mesmo MediaStream — comportamento que silencia o áudio
+          // no mobile.
+          muted
           style={{ filter: settings.videoVivid ? 'contrast(1.08) saturate(1.14) brightness(1.03)' : 'none' }}
           className="h-full w-full object-cover"
           ref={(el) => bind(el, tile.stream)}
@@ -3358,9 +3357,7 @@ export function ShareRoom() {
           <video
             autoPlay
             playsInline
-            // Som de câmera remota vem do áudio fixo (remoteVoice). Telas
-            // compartilhadas seguem com o próprio som (screenMuted).
-            muted={tile.isLocal || (tile.isScreen ? !!screenMuted[tile.id] : true)}
+            muted
             className={`h-full w-full ${tile.isScreen ? 'object-contain' : 'object-cover'}`}
             ref={(el) => bind(el, tile.stream)}
           />
@@ -5981,7 +5978,7 @@ export function ShareRoom() {
                 <video
                   autoPlay
                   playsInline
-                  muted={isLocal || (isScreen ? !!screenMuted[tile.id] : true)}
+                  muted
                   style={{ filter: settings.videoVivid ? 'contrast(1.08) saturate(1.14) brightness(1.03)' : 'none' }}
                   className="h-full w-full object-contain"
                   ref={(el) => {
