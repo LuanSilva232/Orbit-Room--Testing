@@ -687,7 +687,8 @@ function reorientCameraStream(
 // não chegou (corrida de rede — o vídeo via WebRTC chega antes), usamos uma
 // heurística: tela costuma ter VÍDEO e NENHUM ÁUDIO (janela/aba sem som).
 // Assim o stream da tela nunca "engole" o microfone de quem está falando.
-function isScreenStream(stream: MediaStream, screenIds: string[]): boolean {
+function isScreenStream(stream: MediaStream, screenIds: string[], screenStreamIds: string[] = []): boolean {
+  if (screenStreamIds.includes(stream.id)) return true
   const videoId = stream.getVideoTracks()[0]?.id ?? ''
   return videoId !== '' && (screenIds.includes(videoId) || stream.getAudioTracks().length === 0)
 }
@@ -1217,6 +1218,7 @@ export function ShareRoom() {
   const inCallRef = useRef(false)
   const remotePeersRef = useRef<Record<string, Remote>>({})
   const screenTrackIdsRef = useRef<Record<string, string[]>>({})
+  const screenStreamIdsRef = useRef<Record<string, string[]>>({})
   const seenChatRef = useRef<Set<string>>(new Set())
   const profileRef = useRef<Profile>({ name: '' })
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -1438,11 +1440,12 @@ export function ShareRoom() {
   }, [])
 
   // Avisa os demais quais trilhas de vídeo são compartilhamento de tela.
-  const broadcastScreenKind = useCallback((trackIds: string[]) => {
+  const broadcastScreenKind = useCallback((trackIds: string[], streamId?: string) => {
     void apiClient.post('/api/rtc', {
       action: 'screen-kind',
       clientId: clientIdRef.current,
       trackIds,
+      streamId: streamId ?? '',
     })
   }, [])
 
@@ -1836,7 +1839,8 @@ export function ShareRoom() {
         onTrack: (peerId: string, stream: MediaStream) => {
           const prev = remotePeersRef.current[peerId]
           const screenIds = screenTrackIdsRef.current[peerId] ?? []
-          const isScreen = isScreenStream(stream, screenIds)
+          const screenStreamIds = screenStreamIdsRef.current[peerId] ?? []
+          const isScreen = isScreenStream(stream, screenIds, screenStreamIds)
           // Guarda no máx. um stream com o mesmo id (evita duplicar na lista).
           const streams = (prev ? prev.streams : []).filter((s) => s.id !== stream.id)
           if (isScreen) {
@@ -1873,6 +1877,9 @@ export function ShareRoom() {
           const sc = { ...screenTrackIdsRef.current }
           delete sc[peerId]
           screenTrackIdsRef.current = sc
+          const ss = { ...screenStreamIdsRef.current }
+          delete ss[peerId]
+          screenStreamIdsRef.current = ss
           setMutedPeers((prev) => {
             const n = { ...prev }
             delete n[peerId]
@@ -1985,6 +1992,10 @@ export function ShareRoom() {
         screenTrackIdsRef.current = {
           ...screenTrackIdsRef.current,
           [msg.from]: msg.trackIds,
+        }
+        screenStreamIdsRef.current = {
+          ...screenStreamIdsRef.current,
+          [msg.from]: msg.streamId ? [msg.streamId] : [],
         }
         setRemotePeers({ ...remotePeersRef.current })
       }
@@ -2174,6 +2185,7 @@ export function ShareRoom() {
       engineRef.current?.closeAll()
       remotePeersRef.current = {}
       screenTrackIdsRef.current = {}
+      screenStreamIdsRef.current = {}
       setRemotePeers({})
       orientStopRef.current?.()
       orientStopRef.current = null
@@ -2648,7 +2660,7 @@ export function ShareRoom() {
       if (screenAudioMuted) stream.getAudioTracks().forEach((t) => (t.enabled = false))
       engine?.addLocalStream(stream)
       setScreenStreaming(true)
-      broadcastScreenKind([stream.getVideoTracks()[0]?.id ?? ''].filter(Boolean))
+      broadcastScreenKind([stream.getVideoTracks()[0]?.id ?? ''].filter(Boolean), stream.id)
       applyQualityToStreams(quality)
       stream.getVideoTracks()[0]?.addEventListener('ended', () => {
         engine?.removeLocalStream(stream)
@@ -2971,7 +2983,7 @@ export function ShareRoom() {
           isLocal: false,
           peerId,
           muted: mutedPeers[peerId] ?? false,
-          isScreen: isScreenStream(stream, screenIds),
+          isScreen: isScreenStream(stream, screenIds, screenStreamIdsRef.current[peerId] ?? []),
         })
       })
       // Ainda sem mídia (áudio/vídeo não chegou): mostra o card de voz na hora,
@@ -3040,7 +3052,8 @@ export function ShareRoom() {
       const pname = member?.name || peer.name || 'Usuário'
       const pphoto = member?.photo || peer.photo
       const screenIds = screenTrackIdsRef.current[pid] ?? []
-      const audioStream = peer.streams.find((s) => !isScreenStream(s, screenIds))
+      const screenStreamIds = screenStreamIdsRef.current[pid] ?? []
+      const audioStream = peer.streams.find((s) => !isScreenStream(s, screenIds, screenStreamIds))
 
       list.push({
         id: `profile-${pid}`,
@@ -3065,7 +3078,8 @@ export function ShareRoom() {
     const list: { id: string; peerId: string; stream: MediaStream; muted: boolean }[] = []
     for (const [pid, peer] of Object.entries(remotePeers)) {
       const screenIds = screenTrackIdsRef.current[pid] ?? []
-      const voice = peer.streams.find((s) => !isScreenStream(s, screenIds))
+      const screenStreamIds = screenStreamIdsRef.current[pid] ?? []
+      const voice = peer.streams.find((s) => !isScreenStream(s, screenIds, screenStreamIds))
       if (!voice) continue
       list.push({ id: `voice-${pid}`, peerId: pid, stream: voice, muted: mutedPeers[pid] ?? false })
     }
@@ -3076,7 +3090,8 @@ export function ShareRoom() {
     const list: { id: string; stream: MediaStream; muted: boolean }[] = []
     for (const [pid, peer] of Object.entries(remotePeers)) {
       const screenIds = screenTrackIdsRef.current[pid] ?? []
-      const screenStream = peer.streams.find((s) => isScreenStream(s, screenIds))
+      const screenStreamIds = screenStreamIdsRef.current[pid] ?? []
+      const screenStream = peer.streams.find((s) => isScreenStream(s, screenIds, screenStreamIds))
       if (!screenStream) continue
       if (screenStream.getAudioTracks().length === 0) continue
       const tileId = `screen-${pid}`
